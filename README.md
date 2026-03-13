@@ -53,30 +53,28 @@ Give your toddler a phone number they can call anytime to hear a fresh, AI-gener
    - Click Install
    - Restart Home Assistant
 
-3. **Configure in `configuration.yaml`:**
+3. **Add the integration:**
+   - Go to **Settings → Devices & Services → Add Integration**
+   - Search for "Dial-a-Story"
+   - Enter your Telnyx API key and configure options
+   - The integration will validate your API key before completing setup
 
-```yaml
-dial_a_story:
-  telnyx_api_key: "YOUR_TELNYX_API_KEY"
-  openai_api_key: "YOUR_OPENAI_KEY"  # Optional
-  story_length: "medium"  # short, medium, or long
-  voice_preference: "female"  # male or female
-```
-
-4. **Restart Home Assistant**
-
-5. **Get your webhook URL:**
+4. **Get your webhook URL:**
    - Nabu Casa: `https://YOUR_INSTANCE.ui.nabu.casa/api/webhook/dial_a_story`
    - Self-hosted: `https://your-domain.com/api/webhook/dial_a_story`
 
-6. **Configure Telnyx:**
+5. **Configure Telnyx:**
    - Go to [Voice → TeXML Applications](https://portal.telnyx.com/#/app/call-control/texml)
    - Create Application → Name: "Dial-a-Story"
    - Webhook URL: (your HA webhook URL from above)
    - Save
    - Assign your phone number to this application
 
-7. **Test it!** Call your Telnyx number and listen to a story 🎉
+6. **Test it!** Call your Telnyx number and listen to a story 🎉
+
+### Removing the Integration
+
+This integration follows standard integration removal. Go to **Settings → Devices & Services**, click the three dots on Dial-a-Story, and select **Delete**.
 
 ---
 

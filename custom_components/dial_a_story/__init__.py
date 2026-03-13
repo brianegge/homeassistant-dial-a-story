@@ -5,53 +5,35 @@ Home Assistant Custom Component
 HACS-compatible integration for creating a phone number your kids can call
 to hear AI-generated bedtime stories.
 """
+from __future__ import annotations
+
 import asyncio
 import hashlib
 import logging
 import random
 import time
-from typing import Any, Dict
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Dict
 
-import voluptuous as vol
 from homeassistant.components import webhook
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import config_validation as cv
+from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.network import get_url, NoURLAvailableError
+from homeassistant.helpers.network import NoURLAvailableError, get_url
+
+from .const import (
+    CONF_ELEVENLABS_API_KEY,
+    CONF_STORY_LENGTH,
+    CONF_TELNYX_API_KEY,
+    CONF_VOICE_PREFERENCE,
+    DOMAIN,
+    ELEVENLABS_VOICES,
+    WEBHOOK_ID,
+    WEBHOOK_ID_AUDIO,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-DOMAIN = "dial_a_story"
-WEBHOOK_ID = "dial_a_story"
-WEBHOOK_ID_AUDIO = "dial_a_story_audio"
-CONF_TELNYX_API_KEY = "telnyx_api_key"
-CONF_ELEVENLABS_API_KEY = "elevenlabs_api_key"
-CONF_STORY_LENGTH = "story_length"
-CONF_VOICE_PREFERENCE = "voice_preference"
-
-# ElevenLabs voice IDs
-ELEVENLABS_VOICES = {
-    "female": "EXAVITQu4vr4xnSDxMaL",  # Sarah - soft, warm
-    "male": "pNInz6obpgDQGcFmaJgB",  # Adam - deep, narration
-}
-
-CONFIG_SCHEMA = vol.Schema(
-    {
-        DOMAIN: vol.Schema(
-            {
-                vol.Required(CONF_TELNYX_API_KEY): cv.string,
-                vol.Optional(CONF_ELEVENLABS_API_KEY): cv.string,
-                vol.Optional(CONF_STORY_LENGTH, default="medium"): vol.In(
-                    ["short", "medium", "long"]
-                ),
-                vol.Optional(CONF_VOICE_PREFERENCE, default="female"): vol.In(
-                    ["male", "female"]
-                ),
-            }
-        )
-    },
-    extra=vol.ALLOW_EXTRA,
-)
 
 # Story themes appropriate for 2-5 year olds
 STORY_THEMES = [
@@ -92,18 +74,58 @@ BACKUP_STORIES = [
 ]
 
 
+@dataclass
+class DialAStoryData:
+    """Runtime data for Dial-a-Story."""
+
+    telnyx_api_key: str
+    elevenlabs_api_key: str | None
+    story_length: str
+    voice_preference: str
+    active_calls: dict[str, dict[str, Any]] = field(default_factory=dict)
+    audio_cache: dict[str, bytes] = field(default_factory=dict)
+
+
+if TYPE_CHECKING:
+    DialAStoryConfigEntry = ConfigEntry[DialAStoryData]
+
+
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the Dial-a-Story component."""
-    conf = config.get(DOMAIN, {})
+    return True
 
-    hass.data[DOMAIN] = {
-        "telnyx_api_key": conf.get(CONF_TELNYX_API_KEY),
-        "elevenlabs_api_key": conf.get(CONF_ELEVENLABS_API_KEY),
-        "story_length": conf.get(CONF_STORY_LENGTH, "medium"),
-        "voice_preference": conf.get(CONF_VOICE_PREFERENCE, "female"),
-        "active_calls": {},
-        "audio_cache": {},  # hash -> audio bytes
-    }
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: DialAStoryConfigEntry
+) -> bool:
+    """Set up Dial-a-Story from a config entry."""
+    telnyx_api_key = entry.data[CONF_TELNYX_API_KEY]
+
+    # test-before-setup: validate Telnyx API key
+    session = async_get_clientsession(hass)
+    try:
+        response = await session.get(
+            "https://api.telnyx.com/v2/phone_numbers?page[size]=1",
+            headers={
+                "Authorization": f"Bearer {telnyx_api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        if response.status in (401, 403):
+            raise ConfigEntryNotReady("Invalid Telnyx API key")
+    except ConfigEntryNotReady:
+        raise
+    except Exception as err:
+        raise ConfigEntryNotReady(
+            f"Error connecting to Telnyx API: {err}"
+        ) from err
+
+    entry.runtime_data = DialAStoryData(
+        telnyx_api_key=telnyx_api_key,
+        elevenlabs_api_key=entry.data.get(CONF_ELEVENLABS_API_KEY) or None,
+        story_length=entry.data.get(CONF_STORY_LENGTH, "medium"),
+        voice_preference=entry.data.get(CONF_VOICE_PREFERENCE, "female"),
+    )
 
     webhook.async_register(
         hass, DOMAIN, "Dial-a-Story", WEBHOOK_ID, handle_webhook,
@@ -121,6 +143,23 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     return True
 
 
+async def async_unload_entry(
+    hass: HomeAssistant, entry: DialAStoryConfigEntry
+) -> bool:
+    """Unload a Dial-a-Story config entry."""
+    webhook.async_unregister(hass, WEBHOOK_ID)
+    webhook.async_unregister(hass, WEBHOOK_ID_AUDIO)
+    return True
+
+
+def _get_runtime_data(hass: HomeAssistant) -> DialAStoryData:
+    """Get runtime data from the first config entry."""
+    entries = hass.config_entries.async_entries(DOMAIN)
+    if not entries:
+        raise RuntimeError("Dial-a-Story is not configured")
+    return entries[0].runtime_data
+
+
 async def handle_audio_webhook(
     hass: HomeAssistant, webhook_id: str, request
 ) -> None:
@@ -128,10 +167,11 @@ async def handle_audio_webhook(
     from aiohttp import web
 
     audio_id = request.query.get("id")
-    if not audio_id or audio_id not in hass.data[DOMAIN]["audio_cache"]:
+    data = _get_runtime_data(hass)
+    if not audio_id or audio_id not in data.audio_cache:
         return web.Response(status=404)
 
-    audio_bytes = hass.data[DOMAIN]["audio_cache"][audio_id]
+    audio_bytes = data.audio_cache[audio_id]
     return web.Response(
         body=audio_bytes,
         content_type="audio/mpeg",
@@ -179,6 +219,7 @@ class _CallHandler:
 
     def __init__(self, hass: HomeAssistant):
         self.hass = hass
+        self._data = _get_runtime_data(hass)
 
     async def handle_call_initiated(self, payload: Dict[str, Any]):
         """Handle when a new call comes in."""
@@ -187,7 +228,7 @@ class _CallHandler:
 
         _LOGGER.info(f"New call from {from_number}, control_id: {call_control_id}")
 
-        self.hass.data[DOMAIN]["active_calls"][call_control_id] = {
+        self._data.active_calls[call_control_id] = {
             "from": from_number,
             "story_count": 0,
             "state": "initiated",
@@ -202,7 +243,7 @@ class _CallHandler:
         """Handle when call is answered - play greeting."""
         call_control_id = payload.get("call_control_id")
 
-        call_state = self.hass.data[DOMAIN]["active_calls"].get(call_control_id)
+        call_state = self._data.active_calls.get(call_control_id)
         if not call_state:
             return
 
@@ -219,7 +260,7 @@ class _CallHandler:
         """Handle when TTS finishes speaking."""
         call_control_id = payload.get("call_control_id")
 
-        call_state = self.hass.data[DOMAIN]["active_calls"].get(call_control_id)
+        call_state = self._data.active_calls.get(call_control_id)
         if not call_state:
             return
 
@@ -241,7 +282,7 @@ class _CallHandler:
         call_control_id = payload.get("call_control_id")
         digits = payload.get("digits", "")
 
-        call_state = self.hass.data[DOMAIN]["active_calls"].get(call_control_id)
+        call_state = self._data.active_calls.get(call_control_id)
         if not call_state:
             return
 
@@ -270,13 +311,13 @@ class _CallHandler:
         """Handle call ending."""
         call_control_id = payload.get("call_control_id")
 
-        if call_control_id in self.hass.data[DOMAIN]["active_calls"]:
-            call_info = self.hass.data[DOMAIN]["active_calls"][call_control_id]
+        if call_control_id in self._data.active_calls:
+            call_info = self._data.active_calls[call_control_id]
             _LOGGER.info(
                 f"Call ended from {call_info.get('from')}, "
                 f"told {call_info.get('story_count', 0)} stories"
             )
-            del self.hass.data[DOMAIN]["active_calls"][call_control_id]
+            del self._data.active_calls[call_control_id]
 
     async def _tell_story(self, call_control_id: str):
         """Generate and tell a bedtime story."""
@@ -294,7 +335,7 @@ class _CallHandler:
 
     async def _generate_story_ai_task(self) -> str:
         """Generate story using Home Assistant's ai_task service."""
-        story_length = self.hass.data[DOMAIN]["story_length"]
+        story_length = self._data.story_length
         word_counts = {"short": 200, "medium": 350, "long": 500}
         max_words = word_counts[story_length]
 
@@ -358,16 +399,14 @@ class _CallHandler:
 
     async def _speak_on_call(self, call_control_id: str, text: str, pause: int = 0):
         """Convert text to speech on active call."""
-        elevenlabs_key = self.hass.data[DOMAIN].get("elevenlabs_api_key")
-
-        if elevenlabs_key:
+        if self._data.elevenlabs_api_key:
             try:
                 await self._speak_elevenlabs(call_control_id, text)
                 return
             except Exception as e:
                 _LOGGER.warning(f"ElevenLabs TTS failed: {e}, falling back to Telnyx")
 
-        voice_pref = self.hass.data[DOMAIN]["voice_preference"]
+        voice_pref = self._data.voice_preference
         await self._telnyx_api_call(
             f"/v2/calls/{call_control_id}/actions/speak",
             {
@@ -380,8 +419,8 @@ class _CallHandler:
     async def _speak_elevenlabs(self, call_control_id: str, text: str):
         """Generate speech via ElevenLabs and play on call."""
         session = async_get_clientsession(self.hass)
-        api_key = self.hass.data[DOMAIN]["elevenlabs_api_key"]
-        voice_pref = self.hass.data[DOMAIN]["voice_preference"]
+        api_key = self._data.elevenlabs_api_key
+        voice_pref = self._data.voice_preference
         voice_id = ELEVENLABS_VOICES.get(voice_pref, ELEVENLABS_VOICES["female"])
 
         response = await session.post(
@@ -409,7 +448,7 @@ class _CallHandler:
         audio_bytes = await response.read()
         audio_id = hashlib.md5(f"{text}{time.time()}".encode()).hexdigest()
 
-        self.hass.data[DOMAIN]["audio_cache"][audio_id] = audio_bytes
+        self._data.audio_cache[audio_id] = audio_bytes
 
         try:
             external_url = get_url(
@@ -427,7 +466,7 @@ class _CallHandler:
         )
 
         # Clean up old cache entries (keep last 10)
-        cache = self.hass.data[DOMAIN]["audio_cache"]
+        cache = self._data.audio_cache
         if len(cache) > 10:
             oldest_keys = list(cache.keys())[:-10]
             for key in oldest_keys:
@@ -443,7 +482,7 @@ class _CallHandler:
     async def _telnyx_api_call(self, endpoint: str, payload: Dict[str, Any]):
         """Make API call to Telnyx."""
         session = async_get_clientsession(self.hass)
-        api_key = self.hass.data[DOMAIN]["telnyx_api_key"]
+        api_key = self._data.telnyx_api_key
 
         url = f"https://api.telnyx.com{endpoint}"
 

@@ -1,0 +1,30 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Dial-a-Story",
+        "description": "Configure your AI bedtime stories hotline.",
+        "data": {
+          "telnyx_api_key": "Telnyx API key",
+          "elevenlabs_api_key": "ElevenLabs API key (optional)",
+          "story_length": "Story length",
+          "voice_preference": "Voice preference"
+        },
+        "data_description": {
+          "telnyx_api_key": "API key from your Telnyx portal",
+          "elevenlabs_api_key": "Optional API key for natural-sounding ElevenLabs voices",
+          "story_length": "Length of generated stories: short (~200 words), medium (~350), or long (~500)",
+          "voice_preference": "Voice gender for text-to-speech"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to Telnyx API. Please check your network connection.",
+      "invalid_auth": "Invalid Telnyx API key. Please check your credentials.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "Dial-a-Story is already configured."
+    }
+  }
+}
