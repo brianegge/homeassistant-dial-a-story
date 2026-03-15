@@ -38,6 +38,7 @@ async def _validate_telnyx_api_key(hass, api_key: str) -> bool:
             return False
         return response.status == 200
     except Exception:
+        _LOGGER.exception("Error validating Telnyx API key")
         raise
 
 
