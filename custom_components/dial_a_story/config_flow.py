@@ -46,23 +46,17 @@ class DialAStoryConfigFlow(ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial step."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
             # Prevent duplicate entries
-            self._async_abort_entries_match(
-                {CONF_TELNYX_API_KEY: user_input[CONF_TELNYX_API_KEY]}
-            )
+            self._async_abort_entries_match({CONF_TELNYX_API_KEY: user_input[CONF_TELNYX_API_KEY]})
 
             # Test the Telnyx API key
             try:
-                valid = await _validate_telnyx_api_key(
-                    self.hass, user_input[CONF_TELNYX_API_KEY]
-                )
+                valid = await _validate_telnyx_api_key(self.hass, user_input[CONF_TELNYX_API_KEY])
                 if not valid:
                     errors["base"] = "invalid_auth"
             except Exception:
@@ -77,15 +71,9 @@ class DialAStoryConfigFlow(ConfigFlow, domain=DOMAIN):
                     title="Dial-a-Story",
                     data={
                         CONF_TELNYX_API_KEY: user_input[CONF_TELNYX_API_KEY],
-                        CONF_ELEVENLABS_API_KEY: user_input.get(
-                            CONF_ELEVENLABS_API_KEY, ""
-                        ),
-                        CONF_STORY_LENGTH: user_input.get(
-                            CONF_STORY_LENGTH, "medium"
-                        ),
-                        CONF_VOICE_PREFERENCE: user_input.get(
-                            CONF_VOICE_PREFERENCE, "female"
-                        ),
+                        CONF_ELEVENLABS_API_KEY: user_input.get(CONF_ELEVENLABS_API_KEY, ""),
+                        CONF_STORY_LENGTH: user_input.get(CONF_STORY_LENGTH, "medium"),
+                        CONF_VOICE_PREFERENCE: user_input.get(CONF_VOICE_PREFERENCE, "female"),
                     },
                 )
 
@@ -95,12 +83,8 @@ class DialAStoryConfigFlow(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_TELNYX_API_KEY): str,
                     vol.Optional(CONF_ELEVENLABS_API_KEY): str,
-                    vol.Optional(CONF_STORY_LENGTH, default="medium"): vol.In(
-                        ["short", "medium", "long"]
-                    ),
-                    vol.Optional(CONF_VOICE_PREFERENCE, default="female"): vol.In(
-                        ["male", "female"]
-                    ),
+                    vol.Optional(CONF_STORY_LENGTH, default="medium"): vol.In(["short", "medium", "long"]),
+                    vol.Optional(CONF_VOICE_PREFERENCE, default="female"): vol.In(["male", "female"]),
                 }
             ),
             errors=errors,
