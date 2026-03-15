@@ -7,6 +7,8 @@ from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 
+# Ensure config_flow module is imported so patch targets resolve
+import custom_components.dial_a_story.config_flow  # noqa: F401
 from custom_components.dial_a_story.const import (
     CONF_ELEVENLABS_API_KEY,
     CONF_STORY_LENGTH,
@@ -15,12 +17,7 @@ from custom_components.dial_a_story.const import (
     DOMAIN,
 )
 
-# Ensure config_flow module is imported so patch targets resolve
-import custom_components.dial_a_story.config_flow  # noqa: F401
-
-PATCH_TARGET = (
-    "custom_components.dial_a_story.config_flow.async_get_clientsession"
-)
+PATCH_TARGET = "custom_components.dial_a_story.config_flow.async_get_clientsession"
 
 
 @pytest.fixture
@@ -67,13 +64,9 @@ def mock_setup_entry():
         yield mock
 
 
-async def test_config_flow_success(
-    hass: HomeAssistant, mock_telnyx_valid, mock_setup_entry
-) -> None:
+async def test_config_flow_success(hass: HomeAssistant, mock_telnyx_valid, mock_setup_entry) -> None:
     """Test successful config flow."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
 
@@ -93,13 +86,9 @@ async def test_config_flow_success(
     assert result["data"][CONF_ELEVENLABS_API_KEY] == ""
 
 
-async def test_config_flow_invalid_auth(
-    hass: HomeAssistant, mock_telnyx_invalid_auth
-) -> None:
+async def test_config_flow_invalid_auth(hass: HomeAssistant, mock_telnyx_invalid_auth) -> None:
     """Test config flow with invalid API key."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -113,13 +102,9 @@ async def test_config_flow_invalid_auth(
     assert result["errors"] == {"base": "invalid_auth"}
 
 
-async def test_config_flow_connection_error(
-    hass: HomeAssistant, mock_telnyx_connection_error
-) -> None:
+async def test_config_flow_connection_error(hass: HomeAssistant, mock_telnyx_connection_error) -> None:
     """Test config flow with connection error."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -133,14 +118,10 @@ async def test_config_flow_connection_error(
     assert result["errors"] == {"base": "cannot_connect"}
 
 
-async def test_config_flow_duplicate_entry(
-    hass: HomeAssistant, mock_telnyx_valid, mock_setup_entry
-) -> None:
+async def test_config_flow_duplicate_entry(hass: HomeAssistant, mock_telnyx_valid, mock_setup_entry) -> None:
     """Test config flow aborts on duplicate entry."""
     # Create first entry
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
@@ -152,9 +133,7 @@ async def test_config_flow_duplicate_entry(
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
     # Try to create second entry
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
         {
@@ -167,13 +146,9 @@ async def test_config_flow_duplicate_entry(
     assert result["reason"] == "already_configured"
 
 
-async def test_config_flow_with_elevenlabs(
-    hass: HomeAssistant, mock_telnyx_valid, mock_setup_entry
-) -> None:
+async def test_config_flow_with_elevenlabs(hass: HomeAssistant, mock_telnyx_valid, mock_setup_entry) -> None:
     """Test config flow with optional ElevenLabs key."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": config_entries.SOURCE_USER}
-    )
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
