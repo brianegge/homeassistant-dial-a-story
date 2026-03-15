@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+import homeassistant.helpers.config_validation as cv
 from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -35,6 +36,8 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 # Story themes appropriate for 2-5 year olds
 STORY_THEMES = [
@@ -87,11 +90,6 @@ class DialAStoryData:
 
 if TYPE_CHECKING:
     DialAStoryConfigEntry = ConfigEntry[DialAStoryData]
-
-
-async def async_setup(hass: HomeAssistant, config: dict) -> bool:
-    """Set up the Dial-a-Story component."""
-    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: DialAStoryConfigEntry) -> bool:
