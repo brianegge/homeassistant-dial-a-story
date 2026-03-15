@@ -39,6 +39,8 @@ _LOGGER = logging.getLogger(__name__)
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
+CONTENT_TYPE_JSON = "application/json"
+
 # Story themes appropriate for 2-5 year olds
 STORY_THEMES = [
     "a friendly dinosaur who loves to share toys",
@@ -103,7 +105,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: DialAStoryConfigEntry) -
             "https://api.telnyx.com/v2/phone_numbers?page[size]=1",
             headers={
                 "Authorization": f"Bearer {telnyx_api_key}",
-                "Content-Type": "application/json",
+                "Content-Type": CONTENT_TYPE_JSON,
             },
         )
         if response.status in (401, 403):
@@ -144,7 +146,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: DialAStoryConfigEntry) -
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: DialAStoryConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant,
+    entry: DialAStoryConfigEntry,  # NOSONAR - entry param and async required by HA API
+) -> bool:
     """Unload a Dial-a-Story config entry."""
     webhook.async_unregister(hass, WEBHOOK_ID)
     webhook.async_unregister(hass, WEBHOOK_ID_AUDIO)
@@ -159,7 +164,9 @@ def _get_runtime_data(hass: HomeAssistant) -> DialAStoryData:
     return entries[0].runtime_data
 
 
-async def handle_audio_webhook(hass: HomeAssistant, webhook_id: str, request) -> None:
+async def handle_audio_webhook(  # NOSONAR - async required by HA webhook API
+    hass: HomeAssistant, webhook_id: str, request
+) -> None:
     """Serve cached audio files to Telnyx."""
     from aiohttp import web
 
@@ -293,7 +300,7 @@ class _CallHandler:
         else:
             await self._say_goodbye(call_control_id)
 
-    async def handle_call_hangup(self, payload: dict[str, Any]):
+    async def handle_call_hangup(self, payload: dict[str, Any]):  # NOSONAR - async required by HA API
         """Handle call ending."""
         call_control_id = payload.get("call_control_id")
 
@@ -376,7 +383,12 @@ class _CallHandler:
         await asyncio.sleep(3)
         await self._hangup_call(call_control_id)
 
-    async def _speak_on_call(self, call_control_id: str, text: str, pause: int = 0):
+    async def _speak_on_call(
+        self,
+        call_control_id: str,
+        text: str,
+        pause: int = 0,  # NOSONAR - pause param reserved for future use
+    ):
         """Convert text to speech on active call."""
         if self._data.elevenlabs_api_key:
             try:
@@ -406,7 +418,7 @@ class _CallHandler:
             f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
             headers={
                 "xi-api-key": api_key,
-                "Content-Type": "application/json",
+                "Content-Type": CONTENT_TYPE_JSON,
                 "Accept": "audio/mpeg",
             },
             json={
@@ -462,7 +474,7 @@ class _CallHandler:
                 url,
                 headers={
                     "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
+                    "Content-Type": CONTENT_TYPE_JSON,
                 },
                 json=payload,
             )
