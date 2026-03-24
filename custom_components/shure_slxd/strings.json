@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up Shure SLX-D Receiver",
-        "description": "Connect to your Shure SLXD4 wireless microphone receiver.",
+        "description": "Connect to your Shure SLXD4 wireless microphone receiver. Third-party control must be enabled in the receiver's Advanced Settings.",
         "data": {
           "host": "IP address",
           "num_channels": "Number of channels"
@@ -15,7 +15,7 @@
       }
     },
     "error": {
-      "cannot_connect": "Failed to connect to the Shure receiver. Verify the IP address and that the receiver is powered on.",
+      "cannot_connect": "Failed to connect to the Shure receiver. Verify the IP address, that the receiver is powered on, and that third-party control is enabled.",
       "unknown": "An unexpected error occurred."
     },
     "abort": {
@@ -24,38 +24,38 @@
   },
   "entity": {
     "sensor": {
-      "battery_bars": {
+      "batt_bars": {
         "name": "Ch {channel} battery bars"
       },
-      "battery_charge": {
+      "batt_charge": {
         "name": "Ch {channel} battery"
       },
-      "battery_run_time": {
+      "batt_run_time": {
         "name": "Ch {channel} battery run time"
       },
-      "battery_type": {
+      "batt_type": {
         "name": "Ch {channel} battery type"
       },
-      "rf_level_a": {
-        "name": "Ch {channel} RF level A"
+      "rf_level": {
+        "name": "Ch {channel} RF level"
       },
-      "rf_level_b": {
-        "name": "Ch {channel} RF level B"
-      },
-      "audio_level": {
+      "audio_level_peak": {
         "name": "Ch {channel} audio level"
       },
-      "antenna": {
-        "name": "Ch {channel} antenna"
+      "audio_gain": {
+        "name": "Ch {channel} audio gain"
       },
       "frequency": {
         "name": "Ch {channel} frequency"
       },
-      "tx_type": {
-        "name": "Ch {channel} transmitter type"
+      "tx_model": {
+        "name": "Ch {channel} transmitter"
       },
       "rf_interference": {
         "name": "Ch {channel} RF interference"
+      },
+      "audio_mute": {
+        "name": "Ch {channel} mute"
       },
       "chan_name": {
         "name": "Ch {channel} name"

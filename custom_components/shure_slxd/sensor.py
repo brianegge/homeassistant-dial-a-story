@@ -32,76 +32,70 @@ class ShureChannelSensorDescription(SensorEntityDescription):
 
 CHANNEL_SENSORS: tuple[ShureChannelSensorDescription, ...] = (
     ShureChannelSensorDescription(
-        key="battery_bars",
-        translation_key="battery_bars",
+        key="batt_bars",
+        translation_key="batt_bars",
         native_unit_of_measurement="bars",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:battery",
-        value_fn=lambda ch: ch.battery_bars,
+        value_fn=lambda ch: ch.batt_bars,
     ),
     ShureChannelSensorDescription(
-        key="battery_charge",
-        translation_key="battery_charge",
+        key="batt_charge",
+        translation_key="batt_charge",
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda ch: ch.battery_charge,
+        value_fn=lambda ch: ch.batt_charge,
     ),
     ShureChannelSensorDescription(
-        key="battery_run_time",
-        translation_key="battery_run_time",
+        key="batt_run_time",
+        translation_key="batt_run_time",
         native_unit_of_measurement="min",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:timer-outline",
-        value_fn=lambda ch: ch.battery_run_time,
+        value_fn=lambda ch: ch.batt_run_time,
     ),
     ShureChannelSensorDescription(
-        key="battery_type",
-        translation_key="battery_type",
+        key="batt_type",
+        translation_key="batt_type",
         icon="mdi:battery-unknown",
-        value_fn=lambda ch: ch.battery_type or None,
+        value_fn=lambda ch: ch.batt_type or None,
     ),
     ShureChannelSensorDescription(
-        key="rf_level_a",
-        translation_key="rf_level_a",
+        key="rf_level",
+        translation_key="rf_level",
         native_unit_of_measurement="dBm",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:signal",
-        value_fn=lambda ch: ch.rf_level_a,
+        value_fn=lambda ch: ch.rf_level,
     ),
     ShureChannelSensorDescription(
-        key="rf_level_b",
-        translation_key="rf_level_b",
-        native_unit_of_measurement="dBm",
-        state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:signal",
-        value_fn=lambda ch: ch.rf_level_b,
-    ),
-    ShureChannelSensorDescription(
-        key="audio_level",
-        translation_key="audio_level",
+        key="audio_level_peak",
+        translation_key="audio_level_peak",
         native_unit_of_measurement="dB",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:volume-high",
-        value_fn=lambda ch: ch.audio_level,
+        value_fn=lambda ch: ch.audio_level_peak,
     ),
     ShureChannelSensorDescription(
-        key="antenna",
-        translation_key="antenna",
-        icon="mdi:antenna",
-        value_fn=lambda ch: ch.antenna or None,
+        key="audio_gain",
+        translation_key="audio_gain",
+        native_unit_of_measurement="dB",
+        state_class=SensorStateClass.MEASUREMENT,
+        icon="mdi:knob",
+        value_fn=lambda ch: ch.audio_gain,
     ),
     ShureChannelSensorDescription(
         key="frequency",
         translation_key="frequency",
         icon="mdi:sine-wave",
-        value_fn=lambda ch: ch.frequency or None,
+        value_fn=lambda ch: _format_frequency(ch.frequency) if ch.frequency else None,
     ),
     ShureChannelSensorDescription(
-        key="tx_type",
-        translation_key="tx_type",
+        key="tx_model",
+        translation_key="tx_model",
         icon="mdi:microphone",
-        value_fn=lambda ch: ch.tx_type or None,
+        value_fn=lambda ch: ch.tx_model if ch.tx_model and ch.tx_model != "UNKNOWN" else None,
     ),
     ShureChannelSensorDescription(
         key="rf_interference",
@@ -110,12 +104,27 @@ CHANNEL_SENSORS: tuple[ShureChannelSensorDescription, ...] = (
         value_fn=lambda ch: ch.rf_int_det or None,
     ),
     ShureChannelSensorDescription(
+        key="audio_mute",
+        translation_key="audio_mute",
+        icon="mdi:volume-off",
+        value_fn=lambda ch: ch.audio_mute or None,
+    ),
+    ShureChannelSensorDescription(
         key="chan_name",
         translation_key="chan_name",
         icon="mdi:label-outline",
-        value_fn=lambda ch: ch.chan_name or None,
+        value_fn=lambda ch: ch.chan_name.strip() if ch.chan_name else None,
     ),
 )
+
+
+def _format_frequency(freq_str: str) -> str | None:
+    """Format a 6-digit frequency string as MHz (e.g., 470125 -> 470.125 MHz)."""
+    if len(freq_str) == 6 and freq_str.isdigit():
+        mhz = int(freq_str[:3])
+        khz = int(freq_str[3:])
+        return f"{mhz}.{khz:03d}"
+    return freq_str
 
 
 async def async_setup_entry(

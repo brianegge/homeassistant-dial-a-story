@@ -3,6 +3,9 @@
 Shure wireless receivers expose a command-string interface on TCP port 2202.
 Commands use the format: < GET channel PARAMETER >
 Responses use the format: < REP channel PARAMETER {value} >
+Metering uses: < SAMPLE channel values... >
+
+Reference: https://pubs.shure.com/command-strings/SLXD/en-US
 """
 
 from __future__ import annotations
@@ -18,9 +21,18 @@ from .const import CONNECTION_TIMEOUT, DEFAULT_PORT
 
 _LOGGER = logging.getLogger(__name__)
 
-# Regex to parse Shure response lines: < REP channel PARAMETER {value} >
-_REP_PATTERN = re.compile(r"<\s*REP\s+(\d+)\s+(\w+)\s+\{?(.*?)\}?\s*>")
-_SAMPLE_PATTERN = re.compile(r"<\s*SAMPLE\s+(\d+)\s+ALL\s+(.*?)\s*>")
+# Regex to parse Shure response lines
+# Device-level: < REP PARAMETER {value} >
+_REP_DEVICE_PATTERN = re.compile(r"<\s*REP\s+([A-Z_]+)\s+\{?(.*?)\}?\s*>")
+# Channel-level: < REP channel PARAMETER {value} >
+_REP_CHANNEL_PATTERN = re.compile(r"<\s*REP\s+(\d+)\s+(\w+)\s+\{?(.*?)\}?\s*>")
+# Metering: < SAMPLE channel value value value >
+_SAMPLE_PATTERN = re.compile(r"<\s*SAMPLE\s+(\d+)\s+(.*?)\s*>")
+
+# Sentinel values meaning "unknown" in the Shure protocol
+_UNKNOWN_BYTE = 255
+_UNKNOWN_WORD = 65535
+_CALCULATING = 65534
 
 
 @dataclass
@@ -28,18 +40,20 @@ class ChannelData:
     """Data for a single receiver channel."""
 
     chan_name: str = ""
-    battery_bars: int | None = None
-    battery_charge: int | None = None
-    battery_run_time: int | None = None
-    battery_type: str = ""
+    batt_bars: int | None = None
+    batt_charge: int | None = None
+    batt_run_time: int | None = None
+    batt_type: str = ""
+    tx_model: str = ""
     tx_type: str = ""
     frequency: str = ""
-    group_chan: str = ""
-    antenna: str = ""
+    group_channel: str = ""
+    audio_gain: int | None = None
+    audio_mute: str = ""
     rf_int_det: str = ""
-    audio_level: int | None = None
-    rf_level_a: int | None = None
-    rf_level_b: int | None = None
+    audio_level_peak: int | None = None
+    audio_level_rms: int | None = None
+    rf_level: int | None = None
 
 
 @dataclass
@@ -49,6 +63,8 @@ class DeviceInfo:
     model: str = ""
     fw_ver: str = ""
     device_id: str = ""
+    rf_band: str = ""
+    encryption: str = ""
 
 
 @dataclass
@@ -122,14 +138,29 @@ class ShureClient:
 
     def _parse_response(self, line: str, data: ReceiverData) -> None:
         """Parse a single response line into ReceiverData."""
-        match = _REP_PATTERN.match(line)
+        # Try channel-level REP first (has a digit after REP)
+        match = _REP_CHANNEL_PATTERN.match(line)
         if match:
             channel = int(match.group(1))
             param = match.group(2)
             value = match.group(3).strip()
-            self._apply_param(data, channel, param, value)
+            if channel == 0:
+                self._apply_device_param(data.device, param, value)
+            else:
+                if channel not in data.channels:
+                    data.channels[channel] = ChannelData()
+                self._apply_channel_param(data.channels[channel], param, value)
             return
 
+        # Try device-level REP (no channel number)
+        dev_match = _REP_DEVICE_PATTERN.match(line)
+        if dev_match:
+            param = dev_match.group(1)
+            value = dev_match.group(2).strip()
+            self._apply_device_param(data.device, param, value)
+            return
+
+        # Try SAMPLE metering line
         sample_match = _SAMPLE_PATTERN.match(line)
         if sample_match:
             channel = int(sample_match.group(1))
@@ -137,20 +168,11 @@ class ShureClient:
             if channel not in data.channels:
                 data.channels[channel] = ChannelData()
             ch = data.channels[channel]
-            # SAMPLE format: RF_LVL_A RF_LVL_B AUDIO_LVL (3-digit values)
+            # SAMPLE format: AUDIO_LVL_PEAK AUDIO_LVL_RMS RF_LVL
             if len(values) >= 3:
-                ch.rf_level_a = _parse_int(values[0])
-                ch.rf_level_b = _parse_int(values[1])
-                ch.audio_level = _parse_int(values[2])
-
-    def _apply_param(self, data: ReceiverData, channel: int, param: str, value: str) -> None:
-        """Apply a parsed parameter to the appropriate data structure."""
-        if channel == 0:
-            self._apply_device_param(data.device, param, value)
-        else:
-            if channel not in data.channels:
-                data.channels[channel] = ChannelData()
-            self._apply_channel_param(data.channels[channel], param, value)
+                ch.audio_level_peak = _parse_int(values[0])
+                ch.audio_level_rms = _parse_int(values[1])
+                ch.rf_level = _parse_int(values[2])
 
     def _apply_device_param(self, device: DeviceInfo, param: str, value: str) -> None:
         """Apply a device-level parameter."""
@@ -160,38 +182,45 @@ class ShureClient:
             device.fw_ver = value
         elif param == "DEVICE_ID":
             device.device_id = value
+        elif param == "RF_BAND":
+            device.rf_band = value
+        elif param == "ENCRYPTION":
+            device.encryption = value
 
     def _apply_channel_param(self, ch: ChannelData, param: str, value: str) -> None:
         """Apply a channel-level parameter."""
         if param == "CHAN_NAME":
             ch.chan_name = value
-        elif param == "BATTERY_BARS":
-            ch.battery_bars = _parse_int(value)
-        elif param == "BATTERY_CHARGE":
-            ch.battery_charge = _parse_int(value)
-        elif param == "BATTERY_RUN_TIME":
+        elif param == "BATT_BARS":
+            ch.batt_bars = _parse_int(value)
+        elif param == "BATT_CHARGE":
+            ch.batt_charge = _parse_int(value)
+        elif param in ("BATT_RUN_TIME", "TX_BATT_MINS"):
             parsed = _parse_int(value)
-            ch.battery_run_time = parsed if parsed != 65535 else None
-        elif param == "BATTERY_TYPE":
-            ch.battery_type = value
+            # 65534 means "calculating", treat as unknown
+            ch.batt_run_time = parsed if parsed not in (_UNKNOWN_WORD, _CALCULATING, None) else None
+        elif param == "BATT_TYPE":
+            ch.batt_type = value
+        elif param == "TX_MODEL":
+            ch.tx_model = value
         elif param == "TX_TYPE":
             ch.tx_type = value
         elif param == "FREQUENCY":
             ch.frequency = value
-        elif param == "GROUP_CHAN":
-            ch.group_chan = value
-        elif param == "ANTENNA":
-            ch.antenna = value
+        elif param == "GROUP_CHANNEL":
+            ch.group_channel = value
+        elif param == "AUDIO_GAIN":
+            ch.audio_gain = _parse_int(value)
+        elif param == "AUDIO_MUTE":
+            ch.audio_mute = value
         elif param == "RF_INT_DET":
             ch.rf_int_det = value
-        elif param == "AUDIO_LVL":
-            ch.audio_level = _parse_int(value)
 
     async def get_device_info(self) -> dict[str, str]:
         """Query device-level information."""
         data = ReceiverData()
         for param in ("MODEL", "FW_VER", "DEVICE_ID"):
-            await self._send_command(f"GET 0 {param}")
+            await self._send_command(f"GET {param}")
 
         for line in await self._read_responses():
             self._parse_response(line, data)
@@ -203,31 +232,13 @@ class ShureClient:
         }
 
     async def poll_all(self, num_channels: int) -> ReceiverData:
-        """Poll all data from the receiver."""
+        """Poll all data from the receiver using GET 0 ALL."""
         data = ReceiverData()
 
-        # Query device info
-        for param in ("MODEL", "FW_VER", "DEVICE_ID"):
-            await self._send_command(f"GET 0 {param}")
+        # GET 0 ALL retrieves all parameters for all channels at once
+        await self._send_command("GET 0 ALL")
 
-        # Query each channel
-        channel_params = (
-            "CHAN_NAME",
-            "BATTERY_BARS",
-            "BATTERY_CHARGE",
-            "BATTERY_RUN_TIME",
-            "BATTERY_TYPE",
-            "TX_TYPE",
-            "FREQUENCY",
-            "GROUP_CHAN",
-            "ANTENNA",
-            "RF_INT_DET",
-        )
-        for ch in range(1, num_channels + 1):
-            for param in channel_params:
-                await self._send_command(f"GET {ch} {param}")
-
-        for line in await self._read_responses():
+        for line in await self._read_responses(timeout=3.0):
             self._parse_response(line, data)
 
         return data
@@ -245,8 +256,8 @@ def _parse_int(value: str) -> int | None:
     """Parse an integer value, returning None for unknown/invalid values."""
     try:
         parsed = int(value)
-        # 255 and 65535 are common "unknown" sentinel values
-        if parsed in (255, 65535):
+        # 255 is "unknown" for byte-sized values (battery bars, etc.)
+        if parsed == _UNKNOWN_BYTE:
             return None
         return parsed
     except (ValueError, TypeError):
