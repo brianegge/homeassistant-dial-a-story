@@ -1,0 +1,14 @@
+{
+  "domain": "shure_slxd",
+  "name": "Shure SLX-D",
+  "codeowners": [
+    "@brianegge"
+  ],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/brianegge/homeassistant-dial-a-story",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/brianegge/homeassistant-dial-a-story/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

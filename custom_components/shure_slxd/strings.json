@@ -1,0 +1,65 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Shure SLX-D Receiver",
+        "description": "Connect to your Shure SLXD4 wireless microphone receiver.",
+        "data": {
+          "host": "IP address",
+          "num_channels": "Number of channels"
+        },
+        "data_description": {
+          "host": "IP address of the Shure SLXD4 receiver on your network",
+          "num_channels": "Number of receiver channels (1 for SLXD4, 2 for SLXD4D)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the Shure receiver. Verify the IP address and that the receiver is powered on.",
+      "unknown": "An unexpected error occurred."
+    },
+    "abort": {
+      "already_configured": "This Shure receiver is already configured."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "battery_bars": {
+        "name": "Ch {channel} battery bars"
+      },
+      "battery_charge": {
+        "name": "Ch {channel} battery"
+      },
+      "battery_run_time": {
+        "name": "Ch {channel} battery run time"
+      },
+      "battery_type": {
+        "name": "Ch {channel} battery type"
+      },
+      "rf_level_a": {
+        "name": "Ch {channel} RF level A"
+      },
+      "rf_level_b": {
+        "name": "Ch {channel} RF level B"
+      },
+      "audio_level": {
+        "name": "Ch {channel} audio level"
+      },
+      "antenna": {
+        "name": "Ch {channel} antenna"
+      },
+      "frequency": {
+        "name": "Ch {channel} frequency"
+      },
+      "tx_type": {
+        "name": "Ch {channel} transmitter type"
+      },
+      "rf_interference": {
+        "name": "Ch {channel} RF interference"
+      },
+      "chan_name": {
+        "name": "Ch {channel} name"
+      }
+    }
+  }
+}
