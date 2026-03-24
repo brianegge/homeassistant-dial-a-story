@@ -26,8 +26,8 @@ _LOGGER = logging.getLogger(__name__)
 _REP_DEVICE_PATTERN = re.compile(r"<\s*REP\s+([A-Z_]+)\s+\{?(.*?)\}?\s*>")
 # Channel-level: < REP channel PARAMETER {value} >
 _REP_CHANNEL_PATTERN = re.compile(r"<\s*REP\s+(\d+)\s+(\w+)\s+\{?(.*?)\}?\s*>")
-# Metering: < SAMPLE channel value value value >
-_SAMPLE_PATTERN = re.compile(r"<\s*SAMPLE\s+(\d+)\s+(.*?)\s*>")
+# Metering: < SAMPLE channel ALL peak rms rf_level >
+_SAMPLE_PATTERN = re.compile(r"<\s*SAMPLE\s+(\d+)\s+ALL\s+(.*?)\s*>")
 
 # Sentinel values meaning "unknown" in the Shure protocol
 _UNKNOWN_BYTE = 255
@@ -168,11 +168,12 @@ class ShureClient:
             if channel not in data.channels:
                 data.channels[channel] = ChannelData()
             ch = data.channels[channel]
-            # SAMPLE format: AUDIO_LVL_PEAK AUDIO_LVL_RMS RF_LVL
+            # SAMPLE format after ALL: AUDIO_LVL_PEAK AUDIO_LVL_RMS RF_LVL
+            # Raw values are 0-120; actual dBFS/dBm = raw - 120
             if len(values) >= 3:
-                ch.audio_level_peak = _parse_int(values[0])
-                ch.audio_level_rms = _parse_int(values[1])
-                ch.rf_level = _parse_int(values[2])
+                ch.audio_level_peak = _sample_to_db(values[0])
+                ch.audio_level_rms = _sample_to_db(values[1])
+                ch.rf_level = _sample_to_db(values[2])
 
     def _apply_device_param(self, device: DeviceInfo, param: str, value: str) -> None:
         """Apply a device-level parameter."""
@@ -191,7 +192,7 @@ class ShureClient:
         """Apply a channel-level parameter."""
         if param == "CHAN_NAME":
             ch.chan_name = value
-        elif param == "BATT_BARS":
+        elif param in ("BATT_BARS", "TX_BATT_BARS"):
             ch.batt_bars = _parse_int(value)
         elif param == "BATT_CHARGE":
             ch.batt_charge = _parse_int(value)
@@ -250,6 +251,15 @@ class ShureClient:
             return await self.get_device_info()
         finally:
             await self.disconnect()
+
+
+def _sample_to_db(value: str) -> int | None:
+    """Convert a SAMPLE raw value (0-120) to dB (actual = raw - 120)."""
+    try:
+        raw = int(value)
+        return raw - 120
+    except (ValueError, TypeError):
+        return None
 
 
 def _parse_int(value: str) -> int | None:

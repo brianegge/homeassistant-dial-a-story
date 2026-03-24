@@ -1,6 +1,6 @@
 """Tests for the Shure SLX-D TCP client."""
 
-from custom_components.shure_slxd.client import ReceiverData, ShureClient, _parse_int
+from custom_components.shure_slxd.client import ReceiverData, ShureClient, _parse_int, _sample_to_db
 
 
 def test_parse_rep_device_model():
@@ -163,14 +163,28 @@ def test_parse_rep_batt_type():
     assert data.channels[1].batt_type == "LION"
 
 
-def test_parse_sample():
-    """Test parsing a SAMPLE line with audio peak, RMS, and RF level."""
+def test_parse_rep_tx_batt_bars():
+    """Test parsing TX_BATT_BARS (SLX-D specific battery command)."""
     client = ShureClient("192.168.1.100")
     data = ReceiverData()
-    client._parse_response("< SAMPLE 1 045 038 012 >", data)
-    assert data.channels[1].audio_level_peak == 45
-    assert data.channels[1].audio_level_rms == 38
-    assert data.channels[1].rf_level == 12
+    client._parse_response("< REP 1 TX_BATT_BARS 003 >", data)
+    assert data.channels[1].batt_bars == 3
+
+
+def test_parse_sample():
+    """Test parsing a SAMPLE line with audio peak, RMS, and RF level.
+
+    Raw values are 0-120; actual dB = raw - 120.
+    """
+    client = ShureClient("192.168.1.100")
+    data = ReceiverData()
+    client._parse_response("< SAMPLE 1 ALL 045 038 070 >", data)
+    # 045 - 120 = -75 dBFS (audio peak)
+    assert data.channels[1].audio_level_peak == -75
+    # 038 - 120 = -82 dBFS (audio RMS)
+    assert data.channels[1].audio_level_rms == -82
+    # 070 - 120 = -50 dBm (RF level = good signal)
+    assert data.channels[1].rf_level == -50
 
 
 def test_parse_multiple_channels():
@@ -215,3 +229,11 @@ def test_parse_int_invalid():
     """Test _parse_int with invalid values."""
     assert _parse_int("abc") is None
     assert _parse_int("") is None
+
+
+def test_sample_to_db():
+    """Test _sample_to_db converts raw 0-120 values to dB (raw - 120)."""
+    assert _sample_to_db("120") == 0
+    assert _sample_to_db("070") == -50
+    assert _sample_to_db("000") == -120
+    assert _sample_to_db("abc") is None

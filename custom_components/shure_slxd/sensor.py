@@ -72,7 +72,7 @@ CHANNEL_SENSORS: tuple[ShureChannelSensorDescription, ...] = (
     ShureChannelSensorDescription(
         key="audio_level_peak",
         translation_key="audio_level_peak",
-        native_unit_of_measurement="dB",
+        native_unit_of_measurement="dBFS",
         state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:volume-high",
         value_fn=lambda ch: ch.audio_level_peak,
