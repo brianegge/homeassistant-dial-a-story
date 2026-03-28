@@ -1,12 +1,12 @@
 """Tests for Dial-a-Story config flow."""
 
-from types import MappingProxyType
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 # Ensure config_flow module is imported so patch targets resolve
 import custom_components.dial_a_story.config_flow  # noqa: F401
@@ -77,11 +77,9 @@ def mock_setup_entry():
         yield mock
 
 
-def _create_config_entry(hass: HomeAssistant):
+def _create_config_entry(hass: HomeAssistant) -> MockConfigEntry:
     """Create and add a config entry for reauth/reconfigure tests."""
-    entry = config_entries.ConfigEntry(
-        version=1,
-        minor_version=1,
+    entry = MockConfigEntry(
         domain=DOMAIN,
         title="Dial-a-Story",
         data={
@@ -90,13 +88,9 @@ def _create_config_entry(hass: HomeAssistant):
             CONF_STORY_LENGTH: "medium",
             CONF_VOICE_PREFERENCE: "female",
         },
-        source=config_entries.SOURCE_USER,
         unique_id=DOMAIN,
-        discovery_keys=MappingProxyType({}),
-        options=None,
-        subentries_data=None,
     )
-    hass.config_entries._entries[entry.entry_id] = entry
+    entry.add_to_hass(hass)
     return entry
 
 
