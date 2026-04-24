@@ -1,5 +1,6 @@
 """Tests for Dial-a-Story webhook handlers."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -299,6 +300,41 @@ async def test_webhook_speak_ended_after_offering(
         await handle_webhook(hass, "dial_a_story", mock_request)
 
     mock_goodbye.assert_called_once_with("ctrl_bye")
+
+
+async def test_webhook_speak_ended_after_goodbye(
+    hass: HomeAssistant, runtime_data: DialAStoryData, mock_request
+) -> None:
+    """Test speak.ended after goodbye hangs up the call."""
+    runtime_data.active_calls["ctrl_hangup"] = {
+        "from": "+15551111111",
+        "story_count": 0,
+        "state": "goodbye",
+    }
+
+    mock_request.json.return_value = {
+        "data": {
+            "event_type": "call.speak.ended",
+            "payload": {
+                "call_control_id": "ctrl_hangup",
+            },
+        }
+    }
+
+    with (
+        patch(
+            "custom_components.dial_a_story._get_runtime_data",
+            return_value=runtime_data,
+        ),
+        patch.object(
+            _CallHandler,
+            "_hangup_call",
+            new_callable=AsyncMock,
+        ) as mock_hangup,
+    ):
+        await handle_webhook(hass, "dial_a_story", mock_request)
+
+    mock_hangup.assert_called_once_with("ctrl_hangup")
 
 
 async def test_webhook_speak_ended_unknown_call(
@@ -1117,32 +1153,30 @@ async def test_offer_another_story(
 async def test_say_goodbye(
     hass: HomeAssistant, runtime_data: DialAStoryData
 ) -> None:
-    """Test saying goodbye speaks and hangs up."""
+    """Test saying goodbye speaks and transitions to goodbye state."""
+    runtime_data.active_calls["ctrl_bye"] = {
+        "from": "+15551111111",
+        "story_count": 0,
+        "state": "offering_another",
+    }
+
     with patch(
         "custom_components.dial_a_story._get_runtime_data",
         return_value=runtime_data,
     ):
         handler = _CallHandler(hass)
 
-    with (
-        patch.object(
-            handler,
-            "_speak_on_call",
-            new_callable=AsyncMock,
-        ) as mock_speak,
-        patch.object(
-            handler,
-            "_hangup_call",
-            new_callable=AsyncMock,
-        ) as mock_hangup,
-        patch("custom_components.dial_a_story.asyncio.sleep", new_callable=AsyncMock),
-    ):
+    with patch.object(
+        handler,
+        "_speak_on_call",
+        new_callable=AsyncMock,
+    ) as mock_speak:
         await handler._say_goodbye("ctrl_bye")
 
     mock_speak.assert_called_once()
     goodbye_text = mock_speak.call_args[0][1]
     assert "Sweet dreams" in goodbye_text
-    mock_hangup.assert_called_once_with("ctrl_bye")
+    assert runtime_data.active_calls["ctrl_bye"]["state"] == "goodbye"
 
 
 async def test_hangup_call(
@@ -1192,3 +1226,53 @@ async def test_tell_story(
         await handler._tell_story("ctrl_tell")
 
     mock_speak.assert_called_once_with("ctrl_tell", "A lovely story.", pause=500)
+
+
+async def test_tell_story_uses_pregenerated_task(
+    hass: HomeAssistant, runtime_data: DialAStoryData
+) -> None:
+    """Test tell_story awaits pre-generated story task and plays a filler."""
+
+    async def _story_coro() -> str:
+        return "Pre-baked story."
+
+    story_task = asyncio.create_task(_story_coro())
+
+    runtime_data.active_calls["ctrl_pre"] = {
+        "from": "+15551111111",
+        "story_count": 0,
+        "state": "generating_story",
+        "story_task": story_task,
+    }
+
+    with patch(
+        "custom_components.dial_a_story._get_runtime_data",
+        return_value=runtime_data,
+    ):
+        handler = _CallHandler(hass)
+
+    with (
+        patch.object(
+            handler,
+            "_generate_story",
+            new_callable=AsyncMock,
+        ) as mock_generate,
+        patch.object(
+            handler,
+            "_telnyx_api_call",
+            new_callable=AsyncMock,
+        ) as mock_api,
+        patch.object(
+            handler,
+            "_speak_on_call",
+            new_callable=AsyncMock,
+        ) as mock_speak,
+    ):
+        await handler._tell_story("ctrl_pre")
+
+    mock_generate.assert_not_called()
+    mock_api.assert_called_once()
+    filler_payload = mock_api.call_args[0][1]["payload"]
+    assert "great one" in filler_payload
+    mock_speak.assert_called_once_with("ctrl_pre", "Pre-baked story.", pause=500)
+    assert "story_task" not in runtime_data.active_calls["ctrl_pre"]
