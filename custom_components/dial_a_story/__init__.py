@@ -283,6 +283,11 @@ class _CallHandler:
 
         call_state["state"] = "answered"
 
+        # Start generating the story text in the background while greeting plays
+        call_state["story_task"] = asyncio.create_task(
+            self._generate_story()
+        )
+
         greeting = (
             "Hello! Welcome to Dial-a-Story, your magical story friend! "
             "I'm so happy you called. Let me tell you a wonderful bedtime story!"
@@ -301,8 +306,9 @@ class _CallHandler:
         current_state = call_state.get("state")
 
         if current_state == "answered":
-            call_state["state"] = "telling_story"
+            call_state["state"] = "generating_story"
             await self._tell_story(call_control_id)
+            call_state["state"] = "telling_story"
 
         elif current_state == "telling_story":
             call_state["state"] = "offering_another"
@@ -310,6 +316,9 @@ class _CallHandler:
 
         elif current_state == "offering_another":
             await self._say_goodbye(call_control_id)
+
+        elif current_state == "goodbye":
+            await self._hangup_call(call_control_id)
 
     async def handle_gather_ended(self, payload: dict[str, Any]) -> None:
         """Handle DTMF input (key press) from caller."""
@@ -357,7 +366,29 @@ class _CallHandler:
 
     async def _tell_story(self, call_control_id: str) -> None:
         """Generate and tell a bedtime story."""
-        story = await self._generate_story()
+        call_state = self._data.active_calls.get(call_control_id)
+
+        # Use pre-generated story if available, otherwise generate now
+        story_task = call_state.get("story_task") if call_state else None
+        if story_task:
+            # Play a filler message via Telnyx TTS (fast, no API latency)
+            # while we await story text and convert to audio
+            await self._telnyx_api_call(
+                f"/v2/calls/{call_control_id}/actions/speak",
+                {
+                    "payload": (
+                        "Oh, I have a great one for you tonight! "
+                        "Are you ready? Here we go!"
+                    ),
+                    "voice": self._data.voice_preference,
+                    "language": "en-US",
+                },
+            )
+            story = await story_task
+            call_state.pop("story_task", None)
+        else:
+            story = await self._generate_story()
+
         await self._speak_on_call(call_control_id, story, pause=500)
 
     async def _generate_story(self) -> str:
@@ -435,14 +466,16 @@ class _CallHandler:
 
     async def _say_goodbye(self, call_control_id: str) -> None:
         """Say goodbye and hang up."""
+        call_state = self._data.active_calls.get(call_control_id)
+        if call_state:
+            call_state["state"] = "goodbye"
+
         goodbye = (
             "Sleep tight, little one! Dial-a-Story will be here whenever "
             "you need a bedtime story. Sweet dreams!"
         )
 
         await self._speak_on_call(call_control_id, goodbye)
-        await asyncio.sleep(3)
-        await self._hangup_call(call_control_id)
 
     async def _speak_on_call(
         self,
