@@ -85,3 +85,11 @@ jobs:
           files: dial-a-story.zip
           generate_release_notes: true
           target_commitish: ${{ github.sha }}
+
+      - name: Commit and push bumped version
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add custom_components/dial_a_story/manifest.json
+          git commit -m "Bump version to ${{ steps.bump.outputs.version }}"
+          git push origin main
