@@ -386,7 +386,7 @@ class _CallHandler:
             )
             try:
                 story = await asyncio.wait_for(story_task, timeout=25)
-            except (TimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 _LOGGER.warning("Story generation timed out, using backup")
                 story = random.choice(BACKUP_STORIES).strip()
             except Exception as e:
