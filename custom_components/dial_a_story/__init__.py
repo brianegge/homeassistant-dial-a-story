@@ -384,7 +384,14 @@ class _CallHandler:
                     "language": "en-US",
                 },
             )
-            story = await story_task
+            try:
+                story = await asyncio.wait_for(story_task, timeout=25)
+            except (TimeoutError, asyncio.TimeoutError):
+                _LOGGER.warning("Story generation timed out, using backup")
+                story = random.choice(BACKUP_STORIES).strip()
+            except Exception as e:
+                _LOGGER.warning("Story task failed: %s, using backup", e)
+                story = random.choice(BACKUP_STORIES).strip()
             call_state.pop("story_task", None)
         else:
             story = await self._generate_story()
@@ -430,12 +437,15 @@ class _CallHandler:
             f"Return only the story text, no titles or headers."
         )
 
-        raw_result = await self.hass.services.async_call(
-            "ai_task",
-            "generate_data",
-            {"task_name": "generate_story", "instructions": instructions},
-            blocking=True,
-            return_response=True,
+        raw_result = await asyncio.wait_for(
+            self.hass.services.async_call(
+                "ai_task",
+                "generate_data",
+                {"task_name": "generate_story", "instructions": instructions},
+                blocking=True,
+                return_response=True,
+            ),
+            timeout=30,
         )
         result: dict[str, Any] = dict(raw_result) if raw_result else {}
 
