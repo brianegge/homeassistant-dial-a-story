@@ -411,7 +411,9 @@ class _CallHandler:
         except Exception as e:
             _LOGGER.warning("AI task story generation failed: %s, using backup", e)
 
-        return random.choice(BACKUP_STORIES).strip()
+        backup = random.choice(BACKUP_STORIES).strip()
+        _LOGGER.info("Using backup story (%d chars)", len(backup))
+        return backup
 
     async def _generate_story_ai_task(self) -> str:
         """Generate story using Home Assistant's ai_task service."""
@@ -437,23 +439,28 @@ class _CallHandler:
             f"Return only the story text, no titles or headers."
         )
 
-        raw_result = await asyncio.wait_for(
-            self.hass.services.async_call(
-                "ai_task",
-                "generate_data",
-                {"task_name": "generate_story", "instructions": instructions},
-                blocking=True,
-                return_response=True,
-            ),
-            timeout=30,
-        )
-        result: dict[str, Any] = dict(raw_result) if raw_result else {}
+        try:
+            raw_result = await asyncio.wait_for(
+                self.hass.services.async_call(
+                    "ai_task",
+                    "generate_data",
+                    {"task_name": "generate_story", "instructions": instructions},
+                    blocking=True,
+                    return_response=True,
+                ),
+                timeout=30,
+            )
+            result: dict[str, Any] = dict(raw_result) if raw_result else {}
 
-        story: str = str(result.get("data", "") or "")
-        if not story:
-            raise ValueError("ai_task returned empty response")
+            story: str = str(result.get("data", "") or "")
+            if not story:
+                raise ValueError("ai_task returned empty response")
 
-        return story.strip()
+            _LOGGER.info("Generated story via ai_task (%d chars)", len(story))
+            return story.strip()
+        except Exception as e:
+            _LOGGER.error("ai_task service failed: %s", e)
+            raise
 
     async def _offer_another_story(self, call_control_id: str) -> None:
         """Ask if they want another story."""
