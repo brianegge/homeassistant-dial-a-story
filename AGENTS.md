@@ -37,7 +37,7 @@ Dial-a-Story is a Home Assistant custom integration that provides an AI-powered 
 Configured via `pyproject.toml`:
 - **Ruff** for linting and formatting (line length: 120)
 - **mypy** for type checking
-- Target: Python 3.12+
+- Target: Python 3.14+
 
 ### Tests
 
