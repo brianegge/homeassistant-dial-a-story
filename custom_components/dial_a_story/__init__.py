@@ -451,6 +451,7 @@ class _CallHandler:
                 timeout=30,
             )
             result: dict[str, Any] = dict(raw_result) if raw_result else {}
+            _LOGGER.debug("ai_task response: %s", result)
 
             story: str = str(result.get("data", "") or "")
             if not story:
@@ -527,8 +528,11 @@ class _CallHandler:
         if current_chunk:
             chunks.append(current_chunk)
 
+        _LOGGER.info("Speaking %d chars in %d chunks", len(text), len(chunks))
+
         voice_pref = self._data.voice_preference
         for i, chunk in enumerate(chunks):
+            _LOGGER.debug("Chunk %d/%d: %d chars", i+1, len(chunks), len(chunk))
             await self._telnyx_api_call(
                 f"/v2/calls/{call_control_id}/actions/speak",
                 {
@@ -539,6 +543,9 @@ class _CallHandler:
             )
             if pause and i < len(chunks) - 1:
                 await asyncio.sleep(pause / 1000)
+            elif i < len(chunks) - 1:
+                # Wait between chunks to ensure Telnyx processes them sequentially
+                await asyncio.sleep(0.5)
 
     async def _speak_elevenlabs(
         self, call_control_id: str, text: str
