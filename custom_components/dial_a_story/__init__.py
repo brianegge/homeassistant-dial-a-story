@@ -510,15 +510,35 @@ class _CallHandler:
                     "ElevenLabs TTS failed: %s, falling back to Telnyx", e
                 )
 
+        # Telnyx speak action has a limit, so split long texts
+        # Split at sentence boundaries to avoid cutting mid-word
+        max_chunk = 1000
+        sentences = text.replace("! ", "!|").replace("? ", "?|").replace(". ", ".|").split("|")
+
+        chunks = []
+        current_chunk = ""
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) > max_chunk:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = sentence
+            else:
+                current_chunk += sentence
+        if current_chunk:
+            chunks.append(current_chunk)
+
         voice_pref = self._data.voice_preference
-        await self._telnyx_api_call(
-            f"/v2/calls/{call_control_id}/actions/speak",
-            {
-                "payload": text,
-                "voice": voice_pref,
-                "language": "en-US",
-            },
-        )
+        for i, chunk in enumerate(chunks):
+            await self._telnyx_api_call(
+                f"/v2/calls/{call_control_id}/actions/speak",
+                {
+                    "payload": chunk,
+                    "voice": voice_pref,
+                    "language": "en-US",
+                },
+            )
+            if pause and i < len(chunks) - 1:
+                await asyncio.sleep(pause / 1000)
 
     async def _speak_elevenlabs(
         self, call_control_id: str, text: str
