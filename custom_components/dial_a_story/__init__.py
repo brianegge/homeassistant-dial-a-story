@@ -384,7 +384,14 @@ class _CallHandler:
                     "language": "en-US",
                 },
             )
-            story = await story_task
+            try:
+                story = await asyncio.wait_for(story_task, timeout=25)
+            except TimeoutError:
+                _LOGGER.warning("Story generation timed out, using backup")
+                story = random.choice(BACKUP_STORIES).strip()
+            except Exception as e:
+                _LOGGER.warning("Story task failed: %s, using backup", e)
+                story = random.choice(BACKUP_STORIES).strip()
             call_state.pop("story_task", None)
         else:
             story = await self._generate_story()
@@ -404,7 +411,9 @@ class _CallHandler:
         except Exception as e:
             _LOGGER.warning("AI task story generation failed: %s, using backup", e)
 
-        return random.choice(BACKUP_STORIES).strip()
+        backup = random.choice(BACKUP_STORIES).strip()
+        _LOGGER.info("Using backup story (%d chars)", len(backup))
+        return backup
 
     async def _generate_story_ai_task(self) -> str:
         """Generate story using Home Assistant's ai_task service."""
@@ -430,20 +439,29 @@ class _CallHandler:
             f"Return only the story text, no titles or headers."
         )
 
-        raw_result = await self.hass.services.async_call(
-            "ai_task",
-            "generate_data",
-            {"task_name": "generate_story", "instructions": instructions},
-            blocking=True,
-            return_response=True,
-        )
-        result: dict[str, Any] = dict(raw_result) if raw_result else {}
+        try:
+            raw_result = await asyncio.wait_for(
+                self.hass.services.async_call(
+                    "ai_task",
+                    "generate_data",
+                    {"task_name": "generate_story", "instructions": instructions},
+                    blocking=True,
+                    return_response=True,
+                ),
+                timeout=30,
+            )
+            result: dict[str, Any] = dict(raw_result) if raw_result else {}
+            _LOGGER.debug("ai_task response: %s", result)
 
-        story: str = str(result.get("data", "") or "")
-        if not story:
-            raise ValueError("ai_task returned empty response")
+            story: str = str(result.get("data", "") or "")
+            if not story:
+                raise ValueError("ai_task returned empty response")
 
-        return story.strip()
+            _LOGGER.info("Generated story via ai_task (%d chars)", len(story))
+            return story.strip()
+        except Exception as e:
+            _LOGGER.error("ai_task service failed: %s", e)
+            raise
 
     async def _offer_another_story(self, call_control_id: str) -> None:
         """Ask if they want another story."""
@@ -493,15 +511,41 @@ class _CallHandler:
                     "ElevenLabs TTS failed: %s, falling back to Telnyx", e
                 )
 
+        # Telnyx speak action has a limit, so split long texts
+        # Split at sentence boundaries to avoid cutting mid-word
+        max_chunk = 1000
+        sentences = text.replace("! ", "!|").replace("? ", "?|").replace(". ", ".|").split("|")
+
+        chunks = []
+        current_chunk = ""
+        for sentence in sentences:
+            if len(current_chunk) + len(sentence) > max_chunk:
+                if current_chunk:
+                    chunks.append(current_chunk)
+                current_chunk = sentence
+            else:
+                current_chunk += sentence
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        _LOGGER.info("Speaking %d chars in %d chunks", len(text), len(chunks))
+
         voice_pref = self._data.voice_preference
-        await self._telnyx_api_call(
-            f"/v2/calls/{call_control_id}/actions/speak",
-            {
-                "payload": text,
-                "voice": voice_pref,
-                "language": "en-US",
-            },
-        )
+        for i, chunk in enumerate(chunks):
+            _LOGGER.debug("Chunk %d/%d: %d chars", i+1, len(chunks), len(chunk))
+            await self._telnyx_api_call(
+                f"/v2/calls/{call_control_id}/actions/speak",
+                {
+                    "payload": chunk,
+                    "voice": voice_pref,
+                    "language": "en-US",
+                },
+            )
+            if pause and i < len(chunks) - 1:
+                await asyncio.sleep(pause / 1000)
+            elif i < len(chunks) - 1:
+                # Wait between chunks to ensure Telnyx processes them sequentially
+                await asyncio.sleep(0.5)
 
     async def _speak_elevenlabs(
         self, call_control_id: str, text: str
