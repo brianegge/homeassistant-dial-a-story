@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import random
+import secrets
 import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -117,9 +117,14 @@ _BEDTIME_SIGNOFF = "Sweet dreams, Chloe!"
 
 
 def _theme_for(hour_is_bedtime: bool) -> str:
-    """Pick a story theme suited to the time of day."""
+    """Pick a story theme suited to the time of day.
+
+    secrets rather than random: choosing a story has no security dimension,
+    but SonarCloud's S2245 flags random on new code and secrets costs nothing
+    at this call rate.
+    """
     extra = BEDTIME_THEMES if hour_is_bedtime else DAYTIME_THEMES
-    return random.choice(STORY_THEMES + extra)
+    return secrets.choice(STORY_THEMES + extra)
 
 
 def _daypart() -> dict[str, Any]:
@@ -199,7 +204,7 @@ def _daypart() -> dict[str, Any]:
 
 def _backup_story() -> str:
     """Pick a backup story, matching its sign-off to the time of day."""
-    story = random.choice(BACKUP_STORIES).strip()
+    story = secrets.choice(BACKUP_STORIES).strip()
     signoff = _daypart()["signoff"]
     if signoff != _BEDTIME_SIGNOFF:
         story = story.replace(_BEDTIME_SIGNOFF, signoff)
