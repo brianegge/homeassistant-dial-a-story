@@ -1,5 +1,6 @@
 """Tests for time-of-day story framing."""
 
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from unittest.mock import patch
 
@@ -34,12 +35,23 @@ REQUIRED_KEYS = {
 }
 
 
+@contextmanager
 def _at(hour: int):
-    """Freeze the clock at a given UTC hour."""
-    return patch(
-        "custom_components.dial_a_story.dt_util.utcnow",
-        return_value=datetime(2026, 1, 1, hour, 0, tzinfo=UTC),
-    )
+    """Pin the local wall-clock hour that _daypart sees.
+
+    _daypart uses dt_util.as_local(dt_util.utcnow()), and the test harness
+    defaults DEFAULT_TIME_ZONE to US/Pacific, so freezing utcnow alone leaves
+    the local hour shifted by the UTC offset. Pin the zone to UTC as well so
+    the hour under test is the hour the code reads.
+    """
+    with (
+        patch(
+            "custom_components.dial_a_story.dt_util.utcnow",
+            return_value=datetime(2026, 1, 1, hour, 0, tzinfo=UTC),
+        ),
+        patch("custom_components.dial_a_story.dt_util.DEFAULT_TIME_ZONE", UTC),
+    ):
+        yield
 
 
 @pytest.mark.parametrize("hour", BEDTIME_HOURS)

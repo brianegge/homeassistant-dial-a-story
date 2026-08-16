@@ -659,8 +659,8 @@ async def test_generate_story_ai_fallback_to_backup(
     ):
         story = await handler._generate_story()
 
-    # Should return a backup story (all end with "Sweet dreams, Chloe!")
-    assert "Sweet dreams, Chloe!" in story
+    # Backup stories end with a sign-off matching the time of day
+    assert story.rstrip().endswith(("Sweet dreams, Chloe!", "Have a wonderful day, Chloe!"))
 
 
 async def test_generate_story_ai_task_success(
@@ -730,10 +730,10 @@ async def test_generate_story_ai_task_short_length(
         story = await handler._generate_story_ai_task()
     assert story == "Short story."
 
-    # Verify call used "200" for short
+    # Verify call used the short word count
     call_args = mock_call.call_args
     instructions = call_args[0][2]["instructions"]
-    assert "200-word" in instructions
+    assert "about 200 words" in instructions
 
 
 async def test_generate_story_ai_task_long_length(
@@ -764,7 +764,7 @@ async def test_generate_story_ai_task_long_length(
     # Verify call used "500" for long
     call_args = mock_call.call_args
     instructions = call_args[0][2]["instructions"]
-    assert "500-word" in instructions
+    assert "about 500 words" in instructions
 
 
 async def test_speak_elevenlabs_fallback_to_telnyx(
@@ -1175,7 +1175,7 @@ async def test_say_goodbye(
 
     mock_speak.assert_called_once()
     goodbye_text = mock_speak.call_args[0][1]
-    assert "Sweet dreams" in goodbye_text
+    assert "Dial-a-Story will be here" in goodbye_text
     assert runtime_data.active_calls["ctrl_bye"]["state"] == "goodbye"
 
 
