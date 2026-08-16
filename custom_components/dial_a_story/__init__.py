@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from aiohttp import ClientTimeout, web
-from homeassistant.components import tts, webhook
+from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
@@ -713,6 +713,12 @@ class _CallHandler:
 
     async def _speak_ha_tts(self, call_control_id: str, text: str) -> None:
         """Generate speech via Home Assistant Cloud TTS and play on call."""
+        # Imported here rather than at module scope: homeassistant.components.tts
+        # pulls in mutagen at import time, which Home Assistant installs at
+        # runtime from the tts manifest but the test harness does not. A
+        # module-level import makes the integration unimportable under pytest.
+        from homeassistant.components import tts
+
         media_id = tts.generate_media_source_id(
             self.hass,
             text,
