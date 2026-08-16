@@ -5,3 +5,7 @@
 # dependabot bump to pytest>=9.1.1 had already made this file unsatisfiable;
 # nobody noticed because CI hardcoded its install list and never read it.
 pytest-homeassistant-custom-component>=0.13.355
+# homeassistant.components.tts imports mutagen at module level. Home Assistant
+# installs it at runtime from the tts manifest, but the test harness does not,
+# so any test that exercises the TTS path needs it declared here.
+mutagen>=1.47.0

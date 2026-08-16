@@ -226,7 +226,7 @@ async def test_set_story_service(hass: HomeAssistant, mock_telnyx_valid) -> None
     entry = _make_entry(hass)
     await async_setup_entry(hass, entry)
 
-    assert entry.runtime_data.queued_story is None
+    assert entry.runtime_data.queued_stories == []
 
     await hass.services.async_call(
         DOMAIN,
@@ -235,7 +235,7 @@ async def test_set_story_service(hass: HomeAssistant, mock_telnyx_valid) -> None
         blocking=True,
     )
 
-    assert entry.runtime_data.queued_story == "A magical tale about a friendly dragon."
+    assert entry.runtime_data.queued_stories == ["A magical tale about a friendly dragon."]
 
 
 async def test_set_story_service_strips_whitespace(
@@ -252,7 +252,7 @@ async def test_set_story_service_strips_whitespace(
         blocking=True,
     )
 
-    assert entry.runtime_data.queued_story == "A story with whitespace."
+    assert entry.runtime_data.queued_stories == ["A story with whitespace."]
 
 
 async def test_set_story_service_empty_raises(
@@ -272,11 +272,11 @@ async def test_set_story_service_empty_raises(
 
 
 async def test_clear_story_service(hass: HomeAssistant, mock_telnyx_valid) -> None:
-    """Test clear_story service removes queued story."""
+    """Test clear_story service removes all queued stories."""
     entry = _make_entry(hass)
     await async_setup_entry(hass, entry)
 
-    entry.runtime_data.queued_story = "Some story"
+    entry.runtime_data.queued_stories = ["Some story", "Another story"]
 
     await hass.services.async_call(
         DOMAIN,
@@ -285,7 +285,7 @@ async def test_clear_story_service(hass: HomeAssistant, mock_telnyx_valid) -> No
         blocking=True,
     )
 
-    assert entry.runtime_data.queued_story is None
+    assert entry.runtime_data.queued_stories == []
 
 
 async def test_get_runtime_data_no_entries(hass: HomeAssistant) -> None:

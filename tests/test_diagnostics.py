@@ -64,7 +64,7 @@ async def test_diagnostics_runtime_data(
     assert runtime["story_length"] == "medium"
     assert runtime["voice_preference"] == "female"
     assert runtime["has_elevenlabs"] is True
-    assert runtime["queued_story"] is False
+    assert runtime["queued_stories"] == 0
     assert runtime["active_calls"] == 0
     assert runtime["audio_cache_size"] == 0
 
@@ -72,15 +72,15 @@ async def test_diagnostics_runtime_data(
 async def test_diagnostics_with_active_state(
     hass: HomeAssistant, mock_config_entry
 ) -> None:
-    """Test diagnostics reflects active calls and queued story."""
-    mock_config_entry.runtime_data.queued_story = "A test story"
+    """Test diagnostics reflects active calls and queued stories."""
+    mock_config_entry.runtime_data.queued_stories = ["A test story", "Another"]
     mock_config_entry.runtime_data.active_calls["call_1"] = {"from": "+1234567890"}
     mock_config_entry.runtime_data.audio_cache["audio_1"] = b"fake_audio"
 
     diag = await async_get_config_entry_diagnostics(hass, mock_config_entry)
 
     runtime = diag["runtime"]
-    assert runtime["queued_story"] is True
+    assert runtime["queued_stories"] == 2
     assert runtime["active_calls"] == 1
     assert runtime["audio_cache_size"] == 1
 
