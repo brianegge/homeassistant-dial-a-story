@@ -75,7 +75,7 @@ def test_morning_greeting_only_before_noon(hour: int, expected: str) -> None:
 def test_daypart_always_has_every_key(hour: int) -> None:
     """Both branches must supply the same keys, or the call flow breaks."""
     with _at(hour):
-        assert REQUIRED_KEYS <= set(_daypart())
+        assert set(_daypart()) >= REQUIRED_KEYS
 
 
 @pytest.mark.parametrize("hour", BEDTIME_HOURS)

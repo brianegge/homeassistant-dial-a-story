@@ -126,7 +126,7 @@ def _daypart() -> dict[str, Any]:
     """Return greeting/sign-off wording appropriate to the local time of day."""
     hour = dt_util.as_local(dt_util.utcnow()).hour
 
-    if 17 <= hour or hour < 4:
+    if hour >= 17 or hour < 4:
         return {
             "story_kind": "soothing bedtime story",
             "signoff": _BEDTIME_SIGNOFF,
