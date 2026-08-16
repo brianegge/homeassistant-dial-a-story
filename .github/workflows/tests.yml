@@ -16,7 +16,7 @@ jobs:
           python-version: "3.14"
       - name: Install dependencies
         run: |
-          pip install pytest pytest-asyncio pytest-cov pytest-homeassistant-custom-component
+          pip install -r requirements-dev.txt
       - name: Run tests
         run: |
           pytest --cov=custom_components.dial_a_story --cov-report=xml tests/
@@ -25,3 +25,4 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

@@ -1,7 +1,9 @@
 -r requirements.txt
-pytest>=9.1.1
-pytest-asyncio>=1.4.0
-pytest-cov>=7.1.0
+# pytest, pytest-asyncio and pytest-cov are pinned exactly by
+# pytest-homeassistant-custom-component (currently pytest==9.0.3), so declaring
+# our own floors here fights those pins rather than adding anything. A
+# dependabot bump to pytest>=9.1.1 had already made this file unsatisfiable;
+# nobody noticed because CI hardcoded its install list and never read it.
 pytest-homeassistant-custom-component>=0.13.355
 # homeassistant.components.tts imports mutagen at module level. Home Assistant
 # installs it at runtime from the tts manifest, but the test harness does not,
