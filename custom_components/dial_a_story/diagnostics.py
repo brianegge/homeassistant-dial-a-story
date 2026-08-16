@@ -31,7 +31,7 @@ async def async_get_config_entry_diagnostics(
             "story_length": data.story_length,
             "voice_preference": data.voice_preference,
             "has_elevenlabs": data.elevenlabs_api_key is not None,
-            "queued_story": data.queued_story is not None,
+            "queued_stories": len(data.queued_stories),
             "active_calls": len(data.active_calls),
             "audio_cache_size": len(data.audio_cache),
         },

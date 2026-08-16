@@ -18,13 +18,14 @@ from typing import TYPE_CHECKING, Any
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
-from aiohttp import web
-from homeassistant.components import webhook
+from aiohttp import ClientTimeout, web
+from homeassistant.components import tts, webhook
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.network import NoURLAvailableError, get_url
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ELEVENLABS_API_KEY,
@@ -45,18 +46,47 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 CONTENT_TYPE_JSON = "application/json"
 
-# Story themes appropriate for 2-5 year olds
+# Every network call in the call path is bounded. A hung request is silence on
+# the line for a toddler, and — worse — a hang is not an exception, so the
+# Telnyx fallback in _speak_on_call would never fire and no backup story would
+# ever play. Timing out turns a stall into a fallback.
+# ElevenLabs needs ~15s for a full 350-word story, so 30s is 2x headroom.
+ELEVENLABS_TIMEOUT = ClientTimeout(total=30)
+TELNYX_TIMEOUT = ClientTimeout(total=15)
+
+# Home Assistant Cloud TTS (Azure Neural) is the primary voice: it is included
+# in the Nabu Casa subscription with no per-character quota, and synthesises a
+# full story in ~4s versus ~14s for ElevenLabs. Telnyx's own TTS remains the
+# last-resort fallback so the line is never silent.
+TTS_ENGINE = "tts.home_assistant_cloud"
+TTS_LANGUAGE = "en-US"
+
+# Story themes appropriate for 2-5 year olds. Split by time of day: a story
+# about the moon and stars lands badly at eight in the morning, and one about
+# splashing in puddles is the wrong energy at bedtime.
 STORY_THEMES = [
     "Chloe and a friendly dinosaur who loves to share toys",
-    "Chloe riding a magical train that visits the moon and stars",
     "Chloe and a brave little bunny exploring a beautiful garden",
     "Chloe meeting a silly elephant who can't stop sneezing bubbles",
     "Chloe and a kind robot who helps animals find their way home",
     "Chloe and a curious kitten on their first adventure outside",
-    "Chloe and a gentle whale who sings lullabies to fish",
     "Chloe and a happy cloud that makes rainbow rain",
+]
+
+BEDTIME_THEMES = [
+    "Chloe riding a magical train that visits the moon and stars",
+    "Chloe and a gentle whale who sings lullabies to fish",
     "Chloe and a sleepy teddy bear finding the perfect bedtime",
     "Chloe and a tiny firefly making friends in the forest",
+    "Chloe and the moon keeping watch over a quiet, sleepy town",
+]
+
+DAYTIME_THEMES = [
+    "Chloe and a cheerful duck splashing in puddles after the rain",
+    "Chloe and a busy little bee visiting every flower in the garden",
+    "Chloe and a wobbly baby goat learning how to jump",
+    "Chloe helping a squirrel gather acorns for a picnic",
+    "Chloe and a friendly puppy racing across the soft green grass",
 ]
 
 # Backup stories in case LLM is unavailable
@@ -80,6 +110,101 @@ BACKUP_STORIES = [
     in the sky. Sweet dreams, Chloe!""",
 ]
 
+# The hotline gets called in the morning as often as at bedtime, but the
+# greeting, story framing and sign-off used to be hardcoded for bedtime, so a
+# 7am caller was told to go to sleep. Everything time-dependent lives here.
+_BEDTIME_SIGNOFF = "Sweet dreams, Chloe!"
+
+
+def _theme_for(hour_is_bedtime: bool) -> str:
+    """Pick a story theme suited to the time of day."""
+    extra = BEDTIME_THEMES if hour_is_bedtime else DAYTIME_THEMES
+    return random.choice(STORY_THEMES + extra)
+
+
+def _daypart() -> dict[str, Any]:
+    """Return greeting/sign-off wording appropriate to the local time of day."""
+    hour = dt_util.as_local(dt_util.utcnow()).hour
+
+    if 17 <= hour or hour < 4:
+        return {
+            "story_kind": "soothing bedtime story",
+            "signoff": _BEDTIME_SIGNOFF,
+            "theme": _theme_for(True),
+            # gentler delivery at bedtime; avoid ||whispering, which loses
+            # intelligibility over a narrowband phone line
+            "voice": "JennyNeural||hopeful",
+            "arc": (
+                "Let the story slow down as it goes. By the end Chloe is "
+                "warm, safe and sleepy, ready to close her eyes."
+            ),
+            "greeting": (
+                "Hello! Welcome to Dial-a-Story, your magical story friend! "
+                "I'm so happy you called. Let me tell you a wonderful "
+                "bedtime story!"
+            ),
+            "filler": (
+                "Oh, I have a great one for you tonight! "
+                "Are you ready? Here we go!"
+            ),
+            "offer": (
+                "Would you like to hear another story? "
+                "Press 1 if you want another story, "
+                "or you can hang up and go to sleep. Sweet dreams!"
+            ),
+            "enough": (
+                "You've had three wonderful stories tonight! "
+                "Time to rest now. Sweet dreams!"
+            ),
+            "goodbye": (
+                "Sleep tight, little one! Dial-a-Story will be here whenever "
+                "you need a bedtime story. Sweet dreams!"
+            ),
+        }
+
+    opener = "Good morning!" if hour < 12 else "Hello!"
+    return {
+        "story_kind": "gentle, happy story",
+        "signoff": "Have a wonderful day, Chloe!",
+        "theme": _theme_for(False),
+        "voice": "JennyNeural||friendly",
+        "arc": (
+            "Keep the story bright and wide awake. Chloe must not fall "
+            "asleep, get sleepy, go to bed, or dream. End with her happy "
+            "and ready for the rest of her day."
+        ),
+        "greeting": (
+            f"{opener} Welcome to Dial-a-Story, your magical story friend! "
+            "I'm so happy you called. Let me tell you a wonderful story!"
+        ),
+        "filler": (
+            "Oh, I have a great one for you! "
+            "Are you ready? Here we go!"
+        ),
+        "offer": (
+            "Would you like to hear another story? "
+            "Press 1 if you want another story, "
+            "or you can hang up and go and play. Have a lovely day!"
+        ),
+        "enough": (
+            "You've had three wonderful stories! "
+            "Time to go and play now. Have a lovely day!"
+        ),
+        "goodbye": (
+            "Bye for now, little one! Dial-a-Story will be here whenever "
+            "you want a story. Have a wonderful day!"
+        ),
+    }
+
+
+def _backup_story() -> str:
+    """Pick a backup story, matching its sign-off to the time of day."""
+    story = random.choice(BACKUP_STORIES).strip()
+    signoff = _daypart()["signoff"]
+    if signoff != _BEDTIME_SIGNOFF:
+        story = story.replace(_BEDTIME_SIGNOFF, signoff)
+    return story
+
 
 @dataclass
 class DialAStoryData:
@@ -89,7 +214,9 @@ class DialAStoryData:
     elevenlabs_api_key: str | None
     story_length: str
     voice_preference: str
-    queued_story: str | None = None
+    # FIFO queue rather than a single slot, so several stories can be lined up
+    # in advance (e.g. three for one bedtime). Each call consumes one.
+    queued_stories: list[str] = field(default_factory=list)
     active_calls: dict[str, dict[str, Any]] = field(default_factory=dict)
     audio_cache: dict[str, bytes] = field(default_factory=dict)
 
@@ -111,6 +238,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: DialAStoryConfigEntry) -
                 "Authorization": f"Bearer {telnyx_api_key}",
                 "Content-Type": CONTENT_TYPE_JSON,
             },
+            timeout=TELNYX_TIMEOUT,
         )
         if response.status in (401, 403):
             raise ConfigEntryNotReady("Invalid Telnyx API key")
@@ -156,13 +284,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: DialAStoryConfigEntry) -
                 translation_domain=DOMAIN,
                 translation_key="story_text_empty",
             )
-        entry.runtime_data.queued_story = story_text.strip()
-        _LOGGER.info("Story queued for next call (%d chars)", len(story_text))
+        entry.runtime_data.queued_stories.append(story_text.strip())
+        _LOGGER.info(
+            "Story queued (%d chars), %d now in queue",
+            len(story_text),
+            len(entry.runtime_data.queued_stories),
+        )
 
     async def handle_clear_story(call: ServiceCall) -> None:
         """Handle clear_story service call."""
-        entry.runtime_data.queued_story = None
-        _LOGGER.info("Queued story cleared")
+        cleared = len(entry.runtime_data.queued_stories)
+        entry.runtime_data.queued_stories.clear()
+        _LOGGER.info("Cleared %d queued stories", cleared)
 
     hass.services.async_register(
         DOMAIN,
@@ -288,12 +421,7 @@ class _CallHandler:
             self._generate_story()
         )
 
-        greeting = (
-            "Hello! Welcome to Dial-a-Story, your magical story friend! "
-            "I'm so happy you called. Let me tell you a wonderful bedtime story!"
-        )
-
-        await self._speak_on_call(call_control_id, greeting)
+        await self._speak_on_call(call_control_id, _daypart()["greeting"])
 
     async def handle_speak_ended(self, payload: dict[str, Any]) -> None:
         """Handle when TTS finishes speaking."""
@@ -307,8 +435,7 @@ class _CallHandler:
 
         if current_state == "answered":
             call_state["state"] = "generating_story"
-            await self._tell_story(call_control_id)
-            call_state["state"] = "telling_story"
+            self._spawn_story(call_control_id)
 
         elif current_state == "telling_story":
             call_state["state"] = "offering_another"
@@ -336,8 +463,7 @@ class _CallHandler:
             if call_state["story_count"] >= 3:
                 await self._speak_on_call(
                     call_control_id,
-                    "You've had three wonderful stories tonight! "
-                    "Time to rest now. Sweet dreams!",
+                    _daypart()["enough"],
                 )
                 await asyncio.sleep(3)
                 await self._hangup_call(call_control_id)
@@ -347,7 +473,7 @@ class _CallHandler:
                     "Wonderful! Here's another story for you!",
                 )
                 await asyncio.sleep(1)
-                await self._tell_story(call_control_id)
+                self._spawn_story(call_control_id)
         else:
             await self._say_goodbye(call_control_id)
 
@@ -364,6 +490,36 @@ class _CallHandler:
             )
             del self._data.active_calls[call_control_id]
 
+    def _spawn_story(self, call_control_id: str) -> None:
+        """Tell the story outside the webhook request context.
+
+        Telnyx gives up on a webhook it has not had a response to within about
+        ten seconds and closes the connection, at which point aiohttp cancels
+        the request handler task. Synthesising a full story takes ~15s, so
+        doing that work inline meant the task was cancelled mid-flight every
+        time. CancelledError is a BaseException, so it slipped past every
+        `except Exception` fallback in the speak path: no timeout, no error,
+        no backup story, just silence on the line.
+
+        Running it as a background task detaches it from the request, so the
+        webhook returns immediately and the story survives.
+        """
+        self.hass.async_create_background_task(
+            self._tell_story_guarded(call_control_id),
+            name=f"dial_a_story_tell_{call_control_id[:12]}",
+        )
+
+    async def _tell_story_guarded(self, call_control_id: str) -> None:
+        """Run _tell_story, logging anything that escapes it."""
+        try:
+            await self._tell_story(call_control_id)
+        except Exception:
+            _LOGGER.exception("Telling story failed for %s", call_control_id)
+            return
+        call_state = self._data.active_calls.get(call_control_id)
+        if call_state:
+            call_state["state"] = "telling_story"
+
     async def _tell_story(self, call_control_id: str) -> None:
         """Generate and tell a bedtime story."""
         call_state = self._data.active_calls.get(call_control_id)
@@ -376,10 +532,7 @@ class _CallHandler:
             await self._telnyx_api_call(
                 f"/v2/calls/{call_control_id}/actions/speak",
                 {
-                    "payload": (
-                        "Oh, I have a great one for you tonight! "
-                        "Are you ready? Here we go!"
-                    ),
+                    "payload": _daypart()["filler"],
                     "voice": self._data.voice_preference,
                     "language": "en-US",
                 },
@@ -388,10 +541,10 @@ class _CallHandler:
                 story = await asyncio.wait_for(story_task, timeout=25)
             except TimeoutError:
                 _LOGGER.warning("Story generation timed out, using backup")
-                story = random.choice(BACKUP_STORIES).strip()
+                story = _backup_story()
             except Exception as e:
                 _LOGGER.warning("Story task failed: %s, using backup", e)
-                story = random.choice(BACKUP_STORIES).strip()
+                story = _backup_story()
             call_state.pop("story_task", None)
         else:
             story = await self._generate_story()
@@ -399,11 +552,14 @@ class _CallHandler:
         await self._speak_on_call(call_control_id, story, pause=500)
 
     async def _generate_story(self) -> str:
-        """Return queued story if set, otherwise generate via AI or backup."""
-        if self._data.queued_story:
-            story = self._data.queued_story
-            self._data.queued_story = None
-            _LOGGER.info("Using queued story (%d chars)", len(story))
+        """Return the next queued story if any, else generate via AI or backup."""
+        if self._data.queued_stories:
+            story = self._data.queued_stories.pop(0)
+            _LOGGER.info(
+                "Using queued story (%d chars), %d left in queue",
+                len(story),
+                len(self._data.queued_stories),
+            )
             return story
 
         try:
@@ -411,7 +567,7 @@ class _CallHandler:
         except Exception as e:
             _LOGGER.warning("AI task story generation failed: %s, using backup", e)
 
-        backup = random.choice(BACKUP_STORIES).strip()
+        backup = _backup_story()
         _LOGGER.info("Using backup story (%d chars)", len(backup))
         return backup
 
@@ -425,18 +581,31 @@ class _CallHandler:
         }
         max_words = word_counts[story_length]
 
-        theme = random.choice(STORY_THEMES)
+        part = _daypart()
+        theme = part["theme"]
 
         instructions = (
-            f"You are a gentle, warm storyteller creating bedtime stories "
-            f"for a 2-and-a-half-year-old girl named Chloe. "
-            f"Create a soothing {max_words}-word bedtime story about {theme}. "
-            f"Use Chloe's name throughout the story so she feels like the hero. "
-            f"Use simple vocabulary, include repetition and rhythm, "
-            f"focus on comforting happy themes with no scary elements. "
-            f"Use simple words, soft sounds, and a happy ending where everyone is safe. "
-            f"Always end with 'Sweet dreams, Chloe!' "
-            f"Return only the story text, no titles or headers."
+            f"You are a warm, gentle storyteller. You are telling a story out "
+            f"loud over the telephone to a two-and-a-half-year-old girl named "
+            f"Chloe. Tell a {part['story_kind']} about {theme}.\n\n"
+            f"This text will be read aloud by a speech synthesiser over a "
+            f"phone line, so write for the ear:\n"
+            f"- Short sentences, rarely more than ten words.\n"
+            f"- Plain, concrete words a two-year-old already knows.\n"
+            f"- Write numbers as words. No digits, abbreviations, symbols, "
+            f"emoji, markdown, parentheses, ellipses, or dashes.\n"
+            f"- Keep dialogue simple and tag it plainly, like 'said Chloe'.\n\n"
+            f"Story rules:\n"
+            f"- Chloe is the hero. Say her name often.\n"
+            f"- Include one short phrase that repeats three times across the "
+            f"story, like a refrain she can join in with.\n"
+            f"- Gentle and calm throughout. Nothing scary, sudden, or sad. "
+            f"No villains, no peril, nobody lost or alone.\n"
+            f"- Everyone ends up safe, warm, and happy.\n"
+            f"- {part['arc']}\n\n"
+            f"Length: about {max_words} words, in short paragraphs.\n"
+            f"End with exactly this line: {part['signoff']}\n"
+            f"Return only the story text. No title, no heading, no commentary."
         )
 
         try:
@@ -465,16 +634,10 @@ class _CallHandler:
 
     async def _offer_another_story(self, call_control_id: str) -> None:
         """Ask if they want another story."""
-        message = (
-            "Would you like to hear another story? "
-            "Press 1 if you want another story, "
-            "or you can hang up and go to sleep. Sweet dreams!"
-        )
-
         await self._telnyx_api_call(
             f"/v2/calls/{call_control_id}/actions/gather",
             {
-                "payload": message,
+                "payload": _daypart()["offer"],
                 "timeout_millis": 10000,
                 "minimum_digits": 1,
                 "maximum_digits": 1,
@@ -488,12 +651,7 @@ class _CallHandler:
         if call_state:
             call_state["state"] = "goodbye"
 
-        goodbye = (
-            "Sleep tight, little one! Dial-a-Story will be here whenever "
-            "you need a bedtime story. Sweet dreams!"
-        )
-
-        await self._speak_on_call(call_control_id, goodbye)
+        await self._speak_on_call(call_control_id, _daypart()["goodbye"])
 
     async def _speak_on_call(
         self,
@@ -501,15 +659,21 @@ class _CallHandler:
         text: str,
         pause: int = 0,
     ) -> None:
-        """Convert text to speech on active call."""
-        if self._data.elevenlabs_api_key:
-            try:
-                await self._speak_elevenlabs(call_control_id, text)
-                return
-            except Exception as e:
-                _LOGGER.warning(
-                    "ElevenLabs TTS failed: %s, falling back to Telnyx", e
-                )
+        """Convert text to speech on active call.
+
+        Cloud TTS first, Telnyx's built-in TTS as the fallback. ElevenLabs is
+        no longer in the chain: it is quota-limited and ~3x slower. To put it
+        back, call _speak_elevenlabs here before falling through to Telnyx.
+        """
+        try:
+            await self._speak_ha_tts(call_control_id, text)
+            return
+        except Exception as e:
+            _LOGGER.warning(
+                "Cloud TTS failed: %s (%s), falling back to Telnyx",
+                e,
+                type(e).__name__,
+            )
 
         # Telnyx speak action has a limit, so split long texts
         # Split at sentence boundaries to avoid cutting mid-word
@@ -547,47 +711,29 @@ class _CallHandler:
                 # Wait between chunks to ensure Telnyx processes them sequentially
                 await asyncio.sleep(0.5)
 
-    async def _speak_elevenlabs(
-        self, call_control_id: str, text: str
-    ) -> None:
-        """Generate speech via ElevenLabs and play on call."""
-        session = async_get_clientsession(self.hass)
-        api_key = self._data.elevenlabs_api_key
-        if not api_key:
-            raise HomeAssistantError("ElevenLabs API key not configured")
-
-        voice_pref = self._data.voice_preference
-        voice_id = ELEVENLABS_VOICES.get(voice_pref, ELEVENLABS_VOICES["female"])
-
-        response = await session.post(
-            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-            headers={
-                "xi-api-key": api_key,
-                "Content-Type": CONTENT_TYPE_JSON,
-                "Accept": "audio/mpeg",
-            },
-            json={
-                "text": text,
-                "model_id": "eleven_multilingual_v2",
-                "voice_settings": {
-                    "stability": 0.6,
-                    "similarity_boost": 0.75,
-                    "style": 0.1,
-                },
-            },
+    async def _speak_ha_tts(self, call_control_id: str, text: str) -> None:
+        """Generate speech via Home Assistant Cloud TTS and play on call."""
+        media_id = tts.generate_media_source_id(
+            self.hass,
+            text,
+            engine=TTS_ENGINE,
+            language=TTS_LANGUAGE,
+            options={"voice": _daypart()["voice"]},
         )
+        _extension, audio_bytes = await tts.async_get_media_source_audio(
+            self.hass, media_id
+        )
+        _LOGGER.info(
+            "Cloud TTS: %d chars -> %d bytes", len(text), len(audio_bytes)
+        )
+        await self._play_audio_bytes(call_control_id, audio_bytes)
 
-        if response.status != 200:
-            error_text = await response.text()
-            raise HomeAssistantError(
-                translation_domain=DOMAIN,
-                translation_key="elevenlabs_api_error",
-                translation_placeholders={"error": error_text},
-            )
-
-        audio_bytes = await response.read()
+    async def _play_audio_bytes(
+        self, call_control_id: str, audio_bytes: bytes
+    ) -> None:
+        """Cache synthesised audio and tell Telnyx to play it back."""
         audio_id = hashlib.md5(
-            f"{text}{time.time()}".encode()
+            f"{len(audio_bytes)}{time.time()}".encode()
         ).hexdigest()
 
         self._data.audio_cache[audio_id] = audio_bytes
@@ -612,9 +758,54 @@ class _CallHandler:
         # Clean up old cache entries (keep last 10)
         cache = self._data.audio_cache
         if len(cache) > 10:
-            oldest_keys = list(cache.keys())[:-10]
-            for key in oldest_keys:
+            for key in list(cache.keys())[:-10]:
                 del cache[key]
+
+    async def _speak_elevenlabs(
+        self, call_control_id: str, text: str
+    ) -> None:
+        """Generate speech via ElevenLabs and play on call.
+
+        No longer called: kept so it can be re-enabled from _speak_on_call.
+        """
+        session = async_get_clientsession(self.hass)
+        api_key = self._data.elevenlabs_api_key
+        if not api_key:
+            raise HomeAssistantError("ElevenLabs API key not configured")
+
+        voice_pref = self._data.voice_preference
+        voice_id = ELEVENLABS_VOICES.get(voice_pref, ELEVENLABS_VOICES["female"])
+
+        response = await session.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+            headers={
+                "xi-api-key": api_key,
+                "Content-Type": CONTENT_TYPE_JSON,
+                "Accept": "audio/mpeg",
+            },
+            json={
+                "text": text,
+                "model_id": "eleven_multilingual_v2",
+                "voice_settings": {
+                    "stability": 0.6,
+                    "similarity_boost": 0.75,
+                    "style": 0.1,
+                },
+            },
+            timeout=ELEVENLABS_TIMEOUT,
+        )
+
+
+        if response.status != 200:
+            error_text = await response.text()
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="elevenlabs_api_error",
+                translation_placeholders={"error": error_text},
+            )
+
+        audio_bytes = await response.read()
+        await self._play_audio_bytes(call_control_id, audio_bytes)
 
     async def _hangup_call(self, call_control_id: str) -> None:
         """Hang up the call."""
@@ -639,6 +830,7 @@ class _CallHandler:
                     "Content-Type": CONTENT_TYPE_JSON,
                 },
                 json=payload,
+                timeout=TELNYX_TIMEOUT,
             )
 
             if response.status != 200:

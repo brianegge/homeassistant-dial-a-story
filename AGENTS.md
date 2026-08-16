@@ -17,7 +17,9 @@ Dial-a-Story is a Home Assistant custom integration that provides an AI-powered 
 
 3. **Story generation**: Stories are generated via Home Assistant's `ai_task.generate_data` service using themed prompts for ages 2-5. If the AI service is unavailable, hardcoded backup stories are used as fallback.
 
-4. **Text-to-speech**: Speech is delivered either through ElevenLabs API (optional, higher quality) with audio cached and served via the audio webhook, or through Telnyx's built-in TTS as fallback.
+4. **Text-to-speech**: Speech is synthesised through Home Assistant's `tts` integration (default engine `tts.home_assistant_cloud`), with the audio cached in memory and served to Telnyx via the audio webhook. Telnyx's built-in TTS is the fallback if synthesis fails. An ElevenLabs path (`_speak_elevenlabs`) is retained but not wired into `_speak_on_call`.
+
+   Long synthesis **must not** run inside a webhook request handler: Telnyx abandons a webhook after ~10s and closes the connection, which cancels the handler task. `CancelledError` is a `BaseException` and so escapes `except Exception` fallbacks, producing silence on the line with nothing logged. `_spawn_story` therefore runs the story on a background task.
 
 5. **Config flow**: A single-step UI config flow collects the Telnyx API key (required), ElevenLabs API key (optional), story length, and voice preference. The Telnyx key is validated during setup.
 
@@ -26,7 +28,7 @@ Dial-a-Story is a Home Assistant custom integration that provides an AI-powered 
 - `custom_components/dial_a_story/__init__.py` — Integration setup, webhook handlers, call state machine, story generation, TTS
 - `custom_components/dial_a_story/config_flow.py` — UI configuration flow with Telnyx API key validation
 - `custom_components/dial_a_story/const.py` — Domain, webhook IDs, config keys, ElevenLabs voice IDs
-- `custom_components/dial_a_story/manifest.json` — Integration metadata (depends on `ai_task` and `webhook`)
+- `custom_components/dial_a_story/manifest.json` — Integration metadata (depends on `ai_task`, `tts` and `webhook`)
 - `tests/conftest.py` — Shared pytest fixtures
 - `tests/test_config_flow.py` — Config flow tests
 
