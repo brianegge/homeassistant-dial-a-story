@@ -1228,7 +1228,7 @@ async def test_tell_story(
     mock_speak.assert_called_once_with("ctrl_tell", "A lovely story.", pause=500)
 
 
-async def test_tell_story_uses_pregenerated_task(
+async def test_tell_story_plays_filler_while_task_unfinished(
     hass: HomeAssistant, runtime_data: DialAStoryData
 ) -> None:
     """Test tell_story plays a filler while awaiting an unfinished task."""
@@ -1372,6 +1372,52 @@ async def test_tell_story_prepared_audio_after_filler(
     mock_api.assert_called_once()
     mock_speak.assert_not_called()
     mock_play.assert_called_once_with("ctrl_slow", b"mp3-bytes")
+
+
+async def test_tell_story_filler_when_synthesis_failed(
+    hass: HomeAssistant, runtime_data: DialAStoryData
+) -> None:
+    """A finished task without audio still plays the filler to cover TTS."""
+
+    async def _story_coro() -> dict:
+        return {"story": "Pre-baked story.", "audio": None}
+
+    story_task = asyncio.create_task(_story_coro())
+    await story_task
+
+    runtime_data.active_calls["ctrl_noaudio"] = {
+        "from": "+15551111111",
+        "story_count": 0,
+        "state": "generating_story",
+        "story_task": story_task,
+    }
+
+    with patch(
+        "custom_components.dial_a_story._get_runtime_data",
+        return_value=runtime_data,
+    ):
+        handler = _CallHandler(hass)
+
+    with (
+        patch.object(
+            handler,
+            "_telnyx_api_call",
+            new_callable=AsyncMock,
+        ) as mock_api,
+        patch.object(
+            handler,
+            "_speak_on_call",
+            new_callable=AsyncMock,
+        ) as mock_speak,
+    ):
+        await handler._tell_story("ctrl_noaudio")
+
+    mock_api.assert_called_once()
+    filler_payload = mock_api.call_args[0][1]["payload"]
+    assert "great one" in filler_payload
+    mock_speak.assert_called_once_with(
+        "ctrl_noaudio", "Pre-baked story.", pause=500
+    )
 
 
 async def test_prepare_story_synthesizes_audio(

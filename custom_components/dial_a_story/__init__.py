@@ -423,8 +423,9 @@ class _CallHandler:
 
         # Prepare the story (text and synthesised audio) in the background
         # while the greeting plays, so it can start the moment the greeting ends
-        call_state["story_task"] = asyncio.create_task(
-            self._prepare_story()
+        call_state["story_task"] = self.hass.async_create_background_task(
+            self._prepare_story(),
+            name=f"dial_a_story_prepare_{call_control_id[:12]}",
         )
 
         await self._speak_on_call(call_control_id, _daypart()["greeting"])
@@ -533,10 +534,19 @@ class _CallHandler:
         # Use the story prepared during the greeting if available
         story_task = call_state.get("story_task") if call_state else None
         if story_task:
-            if not story_task.done():
+            # The filler is only skippable when prepared audio is genuinely
+            # ready to play: a finished task whose pre-synthesis failed still
+            # needs several seconds in _speak_on_call, which without the
+            # filler would be dead air on the line.
+            story_ready = (
+                story_task.done()
+                and not story_task.cancelled()
+                and story_task.exception() is None
+                and story_task.result().get("audio") is not None
+            )
+            if not story_ready:
                 # Play a filler message via Telnyx TTS (fast, no API
                 # latency) to cover the remaining preparation time.
-                # Skipped entirely when the story is already prepared.
                 await self._telnyx_api_call(
                     f"/v2/calls/{call_control_id}/actions/speak",
                     {
