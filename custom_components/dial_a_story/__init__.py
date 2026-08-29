@@ -421,9 +421,11 @@ class _CallHandler:
 
         call_state["state"] = "answered"
 
-        # Start generating the story text in the background while greeting plays
-        call_state["story_task"] = asyncio.create_task(
-            self._generate_story()
+        # Prepare the story (text and synthesised audio) in the background
+        # while the greeting plays, so it can start the moment the greeting ends
+        call_state["story_task"] = self.hass.async_create_background_task(
+            self._prepare_story(),
+            name=f"dial_a_story_prepare_{call_control_id[:12]}",
         )
 
         await self._speak_on_call(call_control_id, _daypart()["greeting"])
@@ -529,21 +531,35 @@ class _CallHandler:
         """Generate and tell a bedtime story."""
         call_state = self._data.active_calls.get(call_control_id)
 
-        # Use pre-generated story if available, otherwise generate now
+        # Use the story prepared during the greeting if available
         story_task = call_state.get("story_task") if call_state else None
         if story_task:
-            # Play a filler message via Telnyx TTS (fast, no API latency)
-            # while we await story text and convert to audio
-            await self._telnyx_api_call(
-                f"/v2/calls/{call_control_id}/actions/speak",
-                {
-                    "payload": _daypart()["filler"],
-                    "voice": self._data.voice_preference,
-                    "language": "en-US",
-                },
+            # The filler is only skippable when prepared audio is genuinely
+            # ready to play: a finished task whose pre-synthesis failed still
+            # needs several seconds in _speak_on_call, which without the
+            # filler would be dead air on the line.
+            story_ready = (
+                story_task.done()
+                and not story_task.cancelled()
+                and story_task.exception() is None
+                and story_task.result().get("audio") is not None
             )
+            if not story_ready:
+                # Play a filler message via Telnyx TTS (fast, no API
+                # latency) to cover the remaining preparation time.
+                await self._telnyx_api_call(
+                    f"/v2/calls/{call_control_id}/actions/speak",
+                    {
+                        "payload": _daypart()["filler"],
+                        "voice": self._data.voice_preference,
+                        "language": "en-US",
+                    },
+                )
+            audio: bytes | None = None
             try:
-                story = await asyncio.wait_for(story_task, timeout=25)
+                prepared = await asyncio.wait_for(story_task, timeout=25)
+                story = prepared["story"]
+                audio = prepared["audio"]
             except TimeoutError:
                 _LOGGER.warning("Story generation timed out, using backup")
                 story = _backup_story()
@@ -551,10 +567,33 @@ class _CallHandler:
                 _LOGGER.warning("Story task failed: %s, using backup", e)
                 story = _backup_story()
             call_state.pop("story_task", None)
+            if audio is not None:
+                await self._play_audio_bytes(call_control_id, audio)
+                return
         else:
             story = await self._generate_story()
 
         await self._speak_on_call(call_control_id, story, pause=500)
+
+    async def _prepare_story(self) -> dict[str, Any]:
+        """Generate the story text and pre-synthesise its audio.
+
+        Runs in the background while the greeting plays. Doing the Cloud
+        TTS synthesis here too — not just the text — means the story can
+        start the moment the greeting ends instead of after several more
+        seconds of filler and synthesis. Synthesis failure is non-fatal:
+        with audio None the story goes through _speak_on_call, which
+        retries Cloud TTS and falls back to Telnyx's built-in voice.
+        """
+        story = await self._generate_story()
+        audio: bytes | None = None
+        try:
+            audio = await self._synthesize_tts(story)
+        except Exception as e:
+            _LOGGER.warning(
+                "Story pre-synthesis failed: %s (%s)", e, type(e).__name__
+            )
+        return {"story": story, "audio": audio}
 
     async def _generate_story(self) -> str:
         """Return the next queued story if any, else generate via AI or backup."""
@@ -716,8 +755,8 @@ class _CallHandler:
                 # Wait between chunks to ensure Telnyx processes them sequentially
                 await asyncio.sleep(0.5)
 
-    async def _speak_ha_tts(self, call_control_id: str, text: str) -> None:
-        """Generate speech via Home Assistant Cloud TTS and play on call."""
+    async def _synthesize_tts(self, text: str) -> bytes:
+        """Synthesise speech via Home Assistant Cloud TTS, returning MP3 bytes."""
         # Imported here rather than at module scope: homeassistant.components.tts
         # pulls in mutagen at import time, which Home Assistant installs at
         # runtime from the tts manifest but the test harness does not. A
@@ -737,6 +776,11 @@ class _CallHandler:
         _LOGGER.info(
             "Cloud TTS: %d chars -> %d bytes", len(text), len(audio_bytes)
         )
+        return audio_bytes
+
+    async def _speak_ha_tts(self, call_control_id: str, text: str) -> None:
+        """Generate speech via Home Assistant Cloud TTS and play on call."""
+        audio_bytes = await self._synthesize_tts(text)
         await self._play_audio_bytes(call_control_id, audio_bytes)
 
     async def _play_audio_bytes(
