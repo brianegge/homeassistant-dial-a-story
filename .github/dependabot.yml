@@ -7,6 +7,13 @@ updates:
       day: "sunday"
     allow:
       - dependency-type: "all"
+    ignore:
+      # The Home Assistant version under test is pinned exactly by
+      # pytest-homeassistant-custom-component, which lags HA releases by a few
+      # days. Bumping the homeassistant floor ahead of it makes
+      # requirements-dev.txt unsatisfiable (see #88). Let the
+      # pytest-homeassistant-custom-component bumps drive the HA version.
+      - dependency-name: "homeassistant"
 
   - package-ecosystem: "github-actions"
     directory: "/"
